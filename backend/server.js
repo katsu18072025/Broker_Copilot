@@ -6,6 +6,7 @@ import { renewals as sampleRenewals } from "./src/sampleData.js";
 import { tokenStore } from './src/utils/tokenStore.js';
 import { dataOrchestrator } from './src/services/dataOrchestrator.js';
 import { aiService } from './src/services/aiService.js';
+import { hubspotConnector } from './src/connectors/hubspot.js';
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -83,17 +84,26 @@ app.get("/api/renewals/:id/brief", async (req, res) => {
 });
 
 // Connector status
-app.get("/api/connectors", (req, res) => {
+app.get("/api/connectors", async (req, res) => {
   const now = new Date(); 
   const min = (m) => new Date(now.getTime() - m * 60000).toISOString();
   
   const syncStatus = dataOrchestrator.getSyncStatus();
   
+  // Test HubSpot connection status dynamically
+  let hubspotStatus = 'disconnected';
+  try {
+    const hubspotTest = await hubspotConnector.testConnection();
+    hubspotStatus = hubspotTest.success ? 'connected' : 'disconnected';
+  } catch (e) {
+    console.error('HubSpot status check failed:', e.message);
+  }
+  
   const connectors = [
     {
       name: 'HubSpot CRM', 
-      status: tokenStore.isHubSpotConnected() ? 'connected' : 'disconnected', 
-      lastSync: syncStatus.lastSync || (tokenStore.isHubSpotConnected() ? min(12) : null),
+      status: hubspotStatus,
+      lastSync: syncStatus.lastSync || (hubspotStatus === 'connected' ? min(12) : null),
     },
     {
       name: 'Google (Gmail/Calendar)', 
