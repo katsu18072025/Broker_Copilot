@@ -1,9 +1,8 @@
-// src/components/RenewalDetail.jsx
-
 import React from 'react';
 import AIBrief from './AIBrief';
 import ActionPanel from './ActionPanel';
 import WhatIfSimulator from './WhatIfSimulator';
+import QAPanel from './QAPanel'; // ADD THIS IMPORT
 
 export default function RenewalDetail({ item, brief, computeScore }) {
   if (!item) {
@@ -54,6 +53,15 @@ export default function RenewalDetail({ item, brief, computeScore }) {
           <div style={{ width: 320, flexShrink: 0 }}>
             <ActionPanel brief={brief} item={item} />
           </div>
+        </div>
+
+        {/* Q&A Panel - NEW */}
+        <QAPanel item={item} />
+
+        {/* Communication Timeline - NEW */}
+        <div style={{ marginTop: 24 }}>
+          <h4 style={{ margin: '0 0 12px' }}>Communication History</h4>
+          <CommunicationTimeline item={item} />
         </div>
 
         {/* Bottom: What-If Simulator */}

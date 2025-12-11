@@ -15,77 +15,87 @@ class AIService {
   /**
    * Generate renewal brief using AI
    */
-  async generateBrief(renewal, scoreBreakdown) {
-    if (!this.genAI) {
-      return this.generateFallbackBrief(renewal, scoreBreakdown);
+  /**
+ * Generate renewal brief using AI
+ */
+    async generateBrief(renewal, scoreBreakdown) {
+        if (!this.genAI) {
+            return this.generateFallbackBrief(renewal, scoreBreakdown);
+        }
+
+        try {
+            const model = this.genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+            
+            const prompt = `You are an insurance broker assistant. Generate a concise renewal brief for the following policy:
+
+        **Client Details:**
+        - Name: ${renewal.clientName}
+        - Policy Number: ${renewal.policyNumber}
+        - Carrier: ${renewal.carrier}
+        - Product Line: ${renewal.productLine}
+
+        **Financial:**
+        - Premium: ₹${renewal.premium.toLocaleString()}
+        - Expiry Date: ${renewal.expiryDate}
+
+        **Engagement:**
+        - Recent Touchpoints: ${renewal.recentTouchpoints}
+        - Status: ${renewal.status}
+
+        **Priority Score:** ${scoreBreakdown.value}/100
+        - Days to Expiry: ${scoreBreakdown.breakdown.daysToExpiry}
+        - Time Score: ${scoreBreakdown.breakdown.timeScore}
+        - Premium Score: ${scoreBreakdown.breakdown.premiumScore}
+        - Touchpoint Score: ${scoreBreakdown.breakdown.touchpointScore}
+
+        Generate a JSON response with:
+        1. "summary": 2-3 sentence overview
+        2. "riskNotes": Array of 2-3 risk considerations
+        3. "keyActions": Array of 3-4 specific action items
+        4. "outreachTemplate": Professional email template AS A SINGLE STRING (must include "Subject:" line at the top)
+        5. "confidence": "high", "medium", or "low"
+
+        IMPORTANT: outreachTemplate must be a plain text string with line breaks (\\n), not an object.
+
+        Keep it concise and actionable. Return ONLY valid JSON, no markdown.`;
+
+            const result = await model.generateContent(prompt);
+            const response = await result.response;
+            const text = response.text();
+            
+            // Parse AI response
+            let aiData;
+            try {
+            const cleanText = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+            aiData = JSON.parse(cleanText);
+            
+            // CRITICAL: Ensure outreachTemplate is a string
+            if (typeof aiData.outreachTemplate !== 'string') {
+                console.warn('AI returned non-string outreachTemplate, using fallback');
+                throw new Error('Invalid template format');
+            }
+            
+            } catch (parseError) {
+            console.error('Failed to parse AI response:', text);
+            return this.generateFallbackBrief(renewal, scoreBreakdown);
+            }
+
+            return {
+            ...aiData,
+            sources: [{
+                type: 'CRM',
+                system: renewal.sourceSystem,
+                recordId: renewal.crmRecordId
+            }],
+            _scoreBreakdown: scoreBreakdown.breakdown,
+            _aiGenerated: true
+            };
+
+        } catch (error) {
+            console.error('AI generation error:', error.message);
+            return this.generateFallbackBrief(renewal, scoreBreakdown);
+        }
     }
-
-    try {
-      // Use gemini-2.5-flash (stable, faster, cost-effective replacement for 1.5-flash)
-      const model = this.genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
-      
-      const prompt = `You are an insurance broker assistant. Generate a concise renewal brief for the following policy:
-
-**Client Details:**
-- Name: ${renewal.clientName}
-- Policy Number: ${renewal.policyNumber}
-- Carrier: ${renewal.carrier}
-- Product Line: ${renewal.productLine}
-
-**Financial:**
-- Premium: ₹${renewal.premium.toLocaleString()}
-- Expiry Date: ${renewal.expiryDate}
-
-**Engagement:**
-- Recent Touchpoints: ${renewal.recentTouchpoints}
-- Status: ${renewal.status}
-
-**Priority Score:** ${scoreBreakdown.value}/100
-- Days to Expiry: ${scoreBreakdown.breakdown.daysToExpiry}
-- Time Score: ${scoreBreakdown.breakdown.timeScore}
-- Premium Score: ${scoreBreakdown.breakdown.premiumScore}
-- Touchpoint Score: ${scoreBreakdown.breakdown.touchpointScore}
-
-Generate a JSON response with:
-1. "summary": 2-3 sentence overview
-2. "riskNotes": Array of 2-3 risk considerations
-3. "keyActions": Array of 3-4 specific action items
-4. "outreachTemplate": Professional email template for renewal discussion
-5. "confidence": "high", "medium", or "low"
-
-Keep it concise and actionable. Return ONLY valid JSON, no markdown.`;
-
-      const result = await model.generateContent(prompt);
-      const response = await result.response;
-      const text = response.text();
-      
-      // Parse AI response
-      let aiData;
-      try {
-        // Remove markdown code blocks if present
-        const cleanText = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-        aiData = JSON.parse(cleanText);
-      } catch (parseError) {
-        console.error('Failed to parse AI response:', text);
-        return this.generateFallbackBrief(renewal, scoreBreakdown);
-      }
-
-      return {
-        ...aiData,
-        sources: [{
-          type: 'CRM',
-          system: renewal.sourceSystem,
-          recordId: renewal.crmRecordId
-        }],
-        _scoreBreakdown: scoreBreakdown.breakdown,
-        _aiGenerated: true
-      };
-
-    } catch (error) {
-      console.error('AI generation error:', error.message);
-      return this.generateFallbackBrief(renewal, scoreBreakdown);
-    }
-  }
 
   /**
    * Fallback brief generation (template-based)

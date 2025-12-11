@@ -8,40 +8,52 @@ class DataOrchestrator {
   }
 
   /**
-   * Main sync function - orchestrates data from all connectors
+   * Main sync - TRUE multi-source integration
    */
   async syncAllData() {
-    console.log('🔄 Starting data sync...');
+    console.log('🔄 ========== STARTING COMPREHENSIVE DATA SYNC ==========');
     const startTime = Date.now();
 
     try {
-      // Step 1: Fetch HubSpot deals
-      const deals = await this.fetchHubSpotDeals();
-      console.log(`✅ Fetched ${deals.length} deals from HubSpot`);
+      // Step 1: Fetch ALL data sources
+      console.log('\n📦 [Phase 1] Fetching data from all connectors...');
+      
+      const [deals, emails, calendarEvents] = await Promise.all([
+        this.fetchHubSpotData(),
+        this.fetchGoogleEmails(),
+        this.fetchGoogleCalendar()
+      ]);
 
-      // Step 2: Fetch Google emails to count touchpoints
-      const emailTouchpoints = await this.fetchGoogleTouchpoints();
-      console.log(`✅ Analyzed ${Object.keys(emailTouchpoints).length} email threads`);
+      console.log(`\n✅ [Phase 1 Complete]`);
+      console.log(`   - HubSpot Deals: ${deals.length}`);
+      console.log(`   - Google Emails: ${emails.length}`);
+      console.log(`   - Calendar Events: ${calendarEvents.length}`);
 
-      // Step 3: Transform to unified renewal schema
-      const renewals = this.transformToRenewals(deals, emailTouchpoints);
-      console.log(`✅ Created ${renewals.length} renewal records`);
+      // Step 2: Match and enrich
+      console.log('\n🔗 [Phase 2] Matching and enriching data...');
+      const renewals = this.matchAndEnrich(deals, emails, calendarEvents);
+      
+      console.log(`\n✅ [Phase 2 Complete] Created ${renewals.length} enriched renewal records`);
 
-      // Step 4: Cache results
+      // Step 3: Cache results
       this.cachedRenewals = renewals;
       this.lastSync = new Date().toISOString();
 
       const duration = Date.now() - startTime;
-      console.log(`✨ Sync completed in ${duration}ms`);
+      console.log(`\n✨ ========== SYNC COMPLETED in ${duration}ms ==========\n`);
 
       return {
         success: true,
         renewalCount: renewals.length,
+        emailsAnalyzed: emails.length,
+        meetingsFound: calendarEvents.length,
         lastSync: this.lastSync,
         duration
       };
+
     } catch (error) {
-      console.error('❌ Sync failed:', error.message);
+      console.error('\n❌ ========== SYNC FAILED ==========');
+      console.error(error);
       return {
         success: false,
         error: error.message
@@ -50,111 +62,260 @@ class DataOrchestrator {
   }
 
   /**
-   * Fetch deals from HubSpot
+   * Fetch HubSpot deals with contacts
    */
-  async fetchHubSpotDeals() {
+  async fetchHubSpotData() {
     try {
       if (!hubspotConnector.isConnected()) {
-        console.log('⚠️ HubSpot not connected, using fallback data');
+        console.log('⚠️ HubSpot not connected, using empty data');
         return [];
       }
-      return await hubspotConnector.fetchDeals();
+      return await hubspotConnector.fetchDealsWithContacts();
     } catch (error) {
-      console.error('HubSpot fetch error:', error.message);
+      console.error('❌ HubSpot fetch error:', error.message);
       return [];
     }
   }
 
   /**
-   * Analyze Google emails to count touchpoints per client
+   * Fetch Google emails (enriched)
    */
-  async fetchGoogleTouchpoints() {
-    const touchpoints = {};
-    
+  async fetchGoogleEmails() {
     try {
-      const emails = await googleConnector.fetchEmails(50);
-      
-      // Count emails mentioning renewal/policy keywords
-      for (const email of emails) {
-        const headers = email.payload?.headers || [];
-        const subject = headers.find(h => h.name === 'Subject')?.value || '';
-        const from = headers.find(h => h.name === 'From')?.value || '';
-        
-        // Extract company name or domain from email
-        const domain = this.extractDomain(from);
-        
-        if (this.isRenewalRelated(subject)) {
-          touchpoints[domain] = (touchpoints[domain] || 0) + 1;
-        }
-      }
+      return await googleConnector.fetchEmailsEnriched(50);
     } catch (error) {
-      console.log('⚠️ Google not connected or error:', error.message);
+      console.log('⚠️ Google emails not available:', error.message);
+      return [];
     }
-
-    return touchpoints;
   }
 
   /**
-   * Transform raw connector data to unified renewal schema
+   * Fetch Google calendar events
    */
-  transformToRenewals(deals, emailTouchpoints) {
-    const renewals = deals.map((deal, index) => {
+  async fetchGoogleCalendar() {
+    try {
+      return await googleConnector.fetchCalendarEvents(90);
+    } catch (error) {
+      console.log('⚠️ Google calendar not available:', error.message);
+      return [];
+    }
+  }
+
+  /**
+   * CORE MATCHING LOGIC: Match emails/meetings to deals
+   */
+  matchAndEnrich(deals, emails, calendarEvents) {
+    return deals.map((deal, index) => {
       const dealName = deal.properties?.dealname || 'Unknown Deal';
       const amount = parseFloat(deal.properties?.amount || 0);
       const closeDate = deal.properties?.closedate || this.generateFutureDate(30 + index * 15);
-      
-      // Try to match email touchpoints by deal name
-      const domain = this.extractCompanyDomain(dealName);
-      const touchpointCount = emailTouchpoints[domain] || 0;
+      const primaryContact = deal.primaryContact;
 
+      // === EMAIL MATCHING ===
+      const matchedEmails = this.matchEmailsToDeal(deal, emails, primaryContact);
+      
+      // === CALENDAR MATCHING ===
+      const matchedMeetings = this.matchCalendarToDeal(deal, calendarEvents, primaryContact);
+
+      // Calculate communication metrics
+      const emailCount = matchedEmails.length;
+      const meetingCount = matchedMeetings.length;
+      const totalTouchpoints = emailCount + meetingCount;
+
+      // Get most recent communication date
+      const allDates = [
+        ...matchedEmails.map(e => parseInt(e.timestamp)),
+        ...matchedMeetings.map(m => new Date(m.start).getTime())
+      ].filter(Boolean);
+      
+      const lastContactDate = allDates.length > 0 
+        ? new Date(Math.max(...allDates)).toISOString().split('T')[0]
+        : null;
+
+      // Build enriched renewal record
       return {
+        // Basic info
         id: `R-${deal.id || (1000 + index)}`,
         clientName: dealName,
-        policyNumber: `POL-${deal.id || Math.random().toString(36).substr(2, 9).toUpperCase()}`,
+        policyNumber: `POL-${deal.id || this.generateId()}`,
         productLine: this.inferProductLine(dealName),
         carrier: this.inferCarrier(dealName),
         premium: Math.round(amount),
         expiryDate: closeDate,
         status: this.mapDealStage(deal.properties?.dealstage),
+        
+        // Source tracking
         sourceSystem: 'HubSpot',
         crmRecordId: deal.id,
-        lastEmailId: null,
-        recentTouchpoints: touchpointCount,
-        primaryContactName: this.extractContactName(dealName)
+        
+        // ENRICHED: Contact information
+        primaryContact: primaryContact ? {
+          name: `${primaryContact.firstName || ''} ${primaryContact.lastName || ''}`.trim() || 'Unknown',
+          email: primaryContact.email || null,
+          phone: primaryContact.phone || null,
+          hubspotId: primaryContact.id
+        } : {
+          name: this.extractContactName(dealName),
+          email: null,
+          phone: null,
+          hubspotId: null
+        },
+        
+        // ENRICHED: Communication history
+        communications: {
+          totalTouchpoints: totalTouchpoints,
+          emailCount: emailCount,
+          meetingCount: meetingCount,
+          lastContactDate: lastContactDate,
+          recentEmails: matchedEmails.slice(0, 5).map(e => ({
+            id: e.id,
+            subject: e.subject,
+            from: e.from,
+            date: new Date(parseInt(e.timestamp)).toISOString().split('T')[0]
+          })),
+          recentMeetings: matchedMeetings.slice(0, 3).map(m => ({
+            id: m.id,
+            summary: m.summary,
+            date: m.start
+          }))
+        },
+        
+        // ENRICHED: Data source references
+        sources: {
+          hubspot: {
+            dealId: deal.id,
+            contactId: primaryContact?.id || null
+          },
+          google: {
+            emailThreadIds: matchedEmails.map(e => e.threadId),
+            calendarEventIds: matchedMeetings.map(m => m.id)
+          }
+        },
+        
+        // Legacy fields (for backwards compatibility)
+        recentTouchpoints: totalTouchpoints,
+        primaryContactName: primaryContact 
+          ? `${primaryContact.firstName || ''} ${primaryContact.lastName || ''}`.trim()
+          : this.extractContactName(dealName),
+        lastEmailId: matchedEmails[0]?.id || null
       };
     });
-
-    return renewals;
   }
 
   /**
-   * Helper: Extract domain from email address
+   * Match emails to a specific deal
    */
-  extractDomain(email) {
-    const match = email.match(/@([a-zA-Z0-9.-]+)/);
-    return match ? match[1].toLowerCase() : 'unknown';
+  matchEmailsToDeal(deal, emails, primaryContact) {
+    const matches = [];
+    const dealName = (deal.properties?.dealname || '').toLowerCase();
+    const contactEmail = primaryContact?.email?.toLowerCase();
+    const companyDomain = this.extractCompanyDomain(deal.properties?.dealname || '');
+
+    for (const email of emails) {
+      let matchScore = 0;
+      let matchReason = '';
+
+      // STRATEGY 1: Exact email match (highest confidence)
+      if (contactEmail && email.fromEmail === contactEmail) {
+        matchScore = 100;
+        matchReason = 'exact_email_match';
+      }
+      // STRATEGY 2: Domain match
+      else if (email.domain === companyDomain) {
+        matchScore = 70;
+        matchReason = 'domain_match';
+      }
+      // STRATEGY 3: Company name in subject/snippet
+      else if (dealName && (
+        email.subject.toLowerCase().includes(dealName) ||
+        email.snippet.toLowerCase().includes(dealName)
+      )) {
+        matchScore = 50;
+        matchReason = 'keyword_match';
+      }
+      // STRATEGY 4: Renewal-related keywords
+      else if (this.isRenewalRelated(email.subject) || this.isRenewalRelated(email.snippet)) {
+        matchScore = 30;
+        matchReason = 'renewal_keyword';
+      }
+
+      // Accept matches above threshold
+      if (matchScore >= 50) {
+        matches.push({
+          ...email,
+          _matchScore: matchScore,
+          _matchReason: matchReason
+        });
+      }
+    }
+
+    // Sort by match score and recency
+    return matches.sort((a, b) => {
+      if (b._matchScore !== a._matchScore) {
+        return b._matchScore - a._matchScore;
+      }
+      return parseInt(b.timestamp) - parseInt(a.timestamp);
+    });
   }
 
   /**
-   * Helper: Extract company domain from deal name
+   * Match calendar events to a specific deal
    */
+  matchCalendarToDeal(deal, calendarEvents, primaryContact) {
+    const matches = [];
+    const dealName = (deal.properties?.dealname || '').toLowerCase();
+    const contactEmail = primaryContact?.email?.toLowerCase();
+
+    for (const event of calendarEvents) {
+      let matchScore = 0;
+      let matchReason = '';
+
+      // Check if contact email is in attendees
+      if (contactEmail && event.attendees.some(email => email.toLowerCase() === contactEmail)) {
+        matchScore = 100;
+        matchReason = 'attendee_match';
+      }
+      // Check for company name in event summary/description
+      else if (dealName && (
+        event.summary.toLowerCase().includes(dealName) ||
+        event.description.toLowerCase().includes(dealName)
+      )) {
+        matchScore = 70;
+        matchReason = 'keyword_match';
+      }
+      // Check for renewal keywords
+      else if (
+        this.isRenewalRelated(event.summary) ||
+        this.isRenewalRelated(event.description)
+      ) {
+        matchScore = 40;
+        matchReason = 'renewal_keyword';
+      }
+
+      if (matchScore >= 40) {
+        matches.push({
+          ...event,
+          _matchScore: matchScore,
+          _matchReason: matchReason
+        });
+      }
+    }
+
+    return matches.sort((a, b) => b._matchScore - a._matchScore);
+  }
+
+  // ========== HELPER FUNCTIONS ==========
+
+  isRenewalRelated(text) {
+    const keywords = ['renewal', 'policy', 'insurance', 'premium', 'quote', 'expiry', 'coverage'];
+    return keywords.some(kw => text.toLowerCase().includes(kw));
+  }
+
   extractCompanyDomain(dealName) {
-    // Simple heuristic: take first word and add .com
-    const firstWord = dealName.split(' ')[0].toLowerCase();
+    const firstWord = dealName.split(' ')[0].toLowerCase().replace(/[^a-z0-9]/g, '');
     return `${firstWord}.com`;
   }
 
-  /**
-   * Helper: Check if subject is renewal-related
-   */
-  isRenewalRelated(subject) {
-    const keywords = ['renewal', 'policy', 'insurance', 'premium', 'quote', 'expiry'];
-    return keywords.some(kw => subject.toLowerCase().includes(kw));
-  }
-
-  /**
-   * Helper: Infer product line from deal name
-   */
   inferProductLine(dealName) {
     const name = dealName.toLowerCase();
     if (name.includes('property') || name.includes('building')) return 'Property Insurance';
@@ -165,17 +326,11 @@ class DataOrchestrator {
     return 'General Insurance';
   }
 
-  /**
-   * Helper: Infer carrier (placeholder logic)
-   */
   inferCarrier(dealName) {
     const carriers = ['HDFC ERGO', 'ICICI Lombard', 'Bajaj Allianz', 'Reliance General', 'Future Generali'];
     return carriers[Math.floor(Math.random() * carriers.length)];
   }
 
-  /**
-   * Helper: Map HubSpot deal stage to renewal status
-   */
   mapDealStage(stage) {
     if (!stage) return 'Discovery';
     if (stage.includes('qualify')) return 'Pre-Renewal Review';
@@ -185,33 +340,27 @@ class DataOrchestrator {
     return 'Discovery';
   }
 
-  /**
-   * Helper: Extract contact name (simple heuristic)
-   */
   extractContactName(dealName) {
     const names = ['Ananya', 'Rahul', 'Meera', 'Sanjay', 'Priya', 'Vikram'];
     return names[Math.floor(Math.random() * names.length)];
   }
 
-  /**
-   * Helper: Generate future date
-   */
   generateFutureDate(daysFromNow) {
     const date = new Date();
     date.setDate(date.getDate() + daysFromNow);
     return date.toISOString().split('T')[0];
   }
 
-  /**
-   * Get cached renewals
-   */
+  generateId() {
+    return Math.random().toString(36).substr(2, 9).toUpperCase();
+  }
+
+  // ========== PUBLIC INTERFACE ==========
+
   getRenewals() {
     return this.cachedRenewals;
   }
 
-  /**
-   * Get sync status
-   */
   getSyncStatus() {
     return {
       lastSync: this.lastSync,

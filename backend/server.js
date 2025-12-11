@@ -7,6 +7,7 @@ import { tokenStore } from './src/utils/tokenStore.js';
 import { dataOrchestrator } from './src/services/dataOrchestrator.js';
 import { aiService } from './src/services/aiService.js';
 import { hubspotConnector } from './src/connectors/hubspot.js';
+import { googleConnector } from './src/connectors/google.js';
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -174,6 +175,54 @@ app.post("/api/qa", async (req, res) => {
     res.status(500).json({
       answer: 'Sorry, I encountered an error processing your question.',
       confidence: 'low',
+      error: error.message
+    });
+  }
+});
+
+// Send outreach email via Google
+app.post("/api/send-email", async (req, res) => {
+  const { to, subject, body, renewalId } = req.body;
+  
+  if (!to || !subject || !body) {
+    return res.status(400).json({
+      success: false,
+      error: 'Missing required fields: to, subject, body'
+    });
+  }
+
+  try {
+    // Check if Google is connected
+    if (!tokenStore.isGoogleConnected()) {
+      return res.status(403).json({
+        success: false,
+        error: 'Google not connected. Please connect Google first to send emails.',
+        needsAuth: true
+      });
+    }
+
+    // Send via Google
+    const result = await googleConnector.sendEmail(to, subject, body);
+    
+    console.log('✅ Email sent via Gmail:', {
+      to,
+      subject,
+      messageId: result.messageId,
+      renewalId,
+      timestamp: new Date().toISOString()
+    });
+    
+    return res.json({
+      success: true,
+      provider: 'Gmail',
+      messageId: result.messageId,
+      message: `Email successfully sent to ${to}`
+    });
+    
+  } catch (error) {
+    console.error('❌ Email send error:', error);
+    return res.status(500).json({
+      success: false,
       error: error.message
     });
   }

@@ -1,28 +1,25 @@
 import axios from 'axios';
 import 'dotenv/config';
 
-// Using Private App approach (simpler for demo)
 const HUBSPOT_ACCESS_TOKEN = process.env.HUBSPOT_ACCESS_TOKEN;
+const API_BASE = 'https://api.hubapi.com';
 
 export class HubSpotConnector {
   
-  // For private app, we don't need OAuth flow
   isConnected() {
     return !!HUBSPOT_ACCESS_TOKEN;
   }
 
-  // Test connection
   async testConnection() {
     console.log('🔗 [HubSpot Connector] Testing connection...');
     
     if (!HUBSPOT_ACCESS_TOKEN) {
-      console.error('❌ [HubSpot Connector] No access token configured in environment');
+      console.error('❌ [HubSpot Connector] No access token configured');
       return { success: false, error: 'No access token configured' };
     }
 
     try {
-      console.log('🔗 [HubSpot Connector] Sending test request to HubSpot API...');
-      const response = await axios.get('https://api.hubapi.com/crm/v3/objects/contacts', {
+      const response = await axios.get(`${API_BASE}/crm/v3/objects/contacts`, {
         headers: { 'Authorization': `Bearer ${HUBSPOT_ACCESS_TOKEN}` },
         params: { limit: 1 }
       });
@@ -30,22 +27,16 @@ export class HubSpotConnector {
       const contactCount = response.data.total || 0;
       console.log('✅ [HubSpot Connector] Connection successful!', {
         timestamp: new Date().toISOString(),
-        contactCount: contactCount,
-        statusCode: response.status
+        contactCount
       });
       
       return { 
         success: true, 
         message: 'HubSpot connection working!',
-        contactCount: contactCount
+        contactCount
       };
     } catch (error) {
-      console.error('❌ [HubSpot Connector] Connection failed:', {
-        timestamp: new Date().toISOString(),
-        statusCode: error.response?.status,
-        errorMessage: error.response?.data?.message || error.message,
-        errorDetails: error.response?.data
-      });
+      console.error('❌ [HubSpot Connector] Connection failed:', error.message);
       return { 
         success: false, 
         error: error.response?.data?.message || error.message 
@@ -53,12 +44,86 @@ export class HubSpotConnector {
     }
   }
 
-  // Fetch deals (for renewal data)
+  /**
+   * Fetch deals WITH associated contacts (enriched)
+   */
+  async fetchDealsWithContacts() {
+    if (!HUBSPOT_ACCESS_TOKEN) throw new Error('Not configured');
+
+    try {
+      console.log('📦 [HubSpot] Fetching deals with contact associations...');
+      
+      // Step 1: Fetch deals with associations
+      const dealsResponse = await axios.get(`${API_BASE}/crm/v3/objects/deals`, {
+        headers: { 'Authorization': `Bearer ${HUBSPOT_ACCESS_TOKEN}` },
+        params: {
+          limit: 100,
+          properties: 'dealname,amount,closedate,dealstage,pipeline,hs_object_id',
+          associations: 'contacts' // Request contact associations
+        }
+      });
+
+      const deals = dealsResponse.data.results || [];
+      console.log(`✅ [HubSpot] Fetched ${deals.length} deals`);
+
+      // Step 2: For each deal, fetch associated contact details
+      const enrichedDeals = await Promise.all(
+        deals.map(async (deal) => {
+          const contactIds = deal.associations?.contacts?.results?.map(c => c.id) || [];
+          
+          // Fetch contact details if associations exist
+          let primaryContact = null;
+          if (contactIds.length > 0) {
+            try {
+              const contactResponse = await axios.get(
+                `${API_BASE}/crm/v3/objects/contacts/${contactIds[0]}`,
+                {
+                  headers: { 'Authorization': `Bearer ${HUBSPOT_ACCESS_TOKEN}` },
+                  params: {
+                    properties: 'firstname,lastname,email,phone,company'
+                  }
+                }
+              );
+              
+              const props = contactResponse.data.properties;
+              primaryContact = {
+                id: contactIds[0],
+                firstName: props.firstname,
+                lastName: props.lastname,
+                email: props.email,
+                phone: props.phone,
+                company: props.company
+              };
+            } catch (err) {
+              console.warn(`⚠️ Failed to fetch contact ${contactIds[0]}:`, err.message);
+            }
+          }
+
+          return {
+            ...deal,
+            primaryContact
+          };
+        })
+      );
+
+      console.log(`✅ [HubSpot] Enriched ${enrichedDeals.filter(d => d.primaryContact).length}/${enrichedDeals.length} deals with contact info`);
+      
+      return enrichedDeals;
+
+    } catch (error) {
+      console.error('❌ [HubSpot] Fetch deals error:', error.response?.data || error.message);
+      throw error;
+    }
+  }
+
+  /**
+   * Legacy method (kept for backwards compatibility)
+   */
   async fetchDeals() {
     if (!HUBSPOT_ACCESS_TOKEN) throw new Error('Not configured');
 
     try {
-      const response = await axios.get('https://api.hubapi.com/crm/v3/objects/deals', {
+      const response = await axios.get(`${API_BASE}/crm/v3/objects/deals`, {
         headers: { 'Authorization': `Bearer ${HUBSPOT_ACCESS_TOKEN}` },
         params: {
           limit: 100,
@@ -73,12 +138,11 @@ export class HubSpotConnector {
     }
   }
 
-  // Fetch contacts
   async fetchContacts() {
     if (!HUBSPOT_ACCESS_TOKEN) throw new Error('Not configured');
 
     try {
-      const response = await axios.get('https://api.hubapi.com/crm/v3/objects/contacts', {
+      const response = await axios.get(`${API_BASE}/crm/v3/objects/contacts`, {
         headers: { 'Authorization': `Bearer ${HUBSPOT_ACCESS_TOKEN}` },
         params: {
           limit: 100,
@@ -93,12 +157,11 @@ export class HubSpotConnector {
     }
   }
 
-  // Fetch companies
   async fetchCompanies() {
     if (!HUBSPOT_ACCESS_TOKEN) throw new Error('Not configured');
 
     try {
-      const response = await axios.get('https://api.hubapi.com/crm/v3/objects/companies', {
+      const response = await axios.get(`${API_BASE}/crm/v3/objects/companies`, {
         headers: { 'Authorization': `Bearer ${HUBSPOT_ACCESS_TOKEN}` },
         params: {
           limit: 100,
