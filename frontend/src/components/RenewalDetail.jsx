@@ -1,3 +1,5 @@
+// frontend/src/components/RenewalDetail.jsx
+
 import React from 'react';
 import AIBrief from './AIBrief';
 import ActionPanel from './ActionPanel';
@@ -14,7 +16,15 @@ export default function RenewalDetail({ item, brief, computeScore }) {
     );
   }
 
-  const { clientName, policyNumber, carrier, expiryDate, premium, priorityScore } = item;
+  const { clientName, policyNumber, carrier, expiryDate, premium, priorityScore, priorityLabel } = item;
+
+  // Determine score color
+  const getScoreColor = (score) => {
+    if (score >= 80) return '#ef4444';
+    if (score >= 65) return '#f59e0b';
+    if (score >= 45) return '#3b82f6';
+    return '#6b7280';
+  };
 
   return (
     <main style={{ flex: 1 }}>
@@ -28,26 +38,44 @@ export default function RenewalDetail({ item, brief, computeScore }) {
             </div>
           </div>
           <div style={{ textAlign: 'right', fontSize: 14 }}>
-            <div>Expiry: <strong>{expiryDate}</strong></div>
-            <div>Premium: <strong>₹{premium.toLocaleString()}</strong></div>
-            <div>
-              Priority Score:{' '}
-              <strong style={{
-                color: priorityScore >= 70 ? '#e74c3c' : priorityScore >= 50 ? '#f39c12' : '#95a5a6',
-                fontSize: 18
+            <div>Expiry: <strong>{expiryDate || 'Not set'}</strong></div>
+            <div>Premium: <strong>₹{premium?.toLocaleString() || '0'}</strong></div>
+            <div style={{ marginTop: 8 }}>
+              <div style={{ fontSize: 11, color: '#64748b', marginBottom: 2 }}>
+                Priority Score
+              </div>
+              <div style={{
+                fontSize: 28,
+                fontWeight: 'bold',
+                color: getScoreColor(priorityScore),
+                lineHeight: 1
               }}>
                 {priorityScore}
-              </strong>
+              </div>
+              <div style={{
+                fontSize: 11,
+                color: getScoreColor(priorityScore),
+                fontWeight: 600
+              }}>
+                {priorityLabel || 'Not Rated'}
+              </div>
             </div>
           </div>
         </div>
 
         {/* Main Two-Column Layout */}
         <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap' }}>
-          {/* Left: AI Brief */}
+          {/* Left: AI Brief (now includes expandable priority breakdown) */}
           <div style={{ flex: 1, minWidth: 300 }}>
             <h4 style={{ margin: '0 0 12px' }}>AI-Generated Brief</h4>
-            <AIBrief brief={brief} />
+            <div style={{ 
+              background: '#041022', 
+              padding: 16, 
+              borderRadius: 8,
+              border: '1px solid #1e293b'
+            }}>
+              <AIBrief brief={brief} item={item} />
+            </div>
           </div>
 
           {/* Right: Actions + Buttons */}
@@ -56,10 +84,10 @@ export default function RenewalDetail({ item, brief, computeScore }) {
           </div>
         </div>
 
-        {/* Q&A Panel - NEW */}
+        {/* Q&A Panel */}
         <QAPanel item={item} />
 
-        {/* Communication Timeline - NEW */}
+        {/* Communication Timeline */}
         <div style={{ marginTop: 24 }}>
           <h4 style={{ margin: '0 0 12px' }}>Communication History</h4>
           <CommunicationTimeline item={item} />
