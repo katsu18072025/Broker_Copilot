@@ -17,7 +17,7 @@ class DataOrchestrator {
     try {
       // Step 1: Fetch ALL data sources
       console.log('\n📦 [Phase 1] Fetching data from all connectors...');
-      
+
       const [deals, emails, calendarEvents] = await Promise.all([
         this.fetchHubSpotData(),
         this.fetchGoogleEmails(),
@@ -32,7 +32,7 @@ class DataOrchestrator {
       // Step 2: Match and enrich
       console.log('\n🔗 [Phase 2] Matching and enriching data...');
       const renewals = this.matchAndEnrich(deals, emails, calendarEvents);
-      
+
       console.log(`\n✅ [Phase 2 Complete] Created ${renewals.length} enriched renewal records`);
 
       // Step 3: Cache results
@@ -109,7 +109,7 @@ class DataOrchestrator {
       const dealName = deal.properties?.dealname || 'Unknown Deal';
       const amount = parseFloat(deal.properties?.amount || 0);
       const closeDate = deal.properties?.closedate || this.generateFutureDate(30 + index * 15);
-      
+
       // ⭐ EXTRACT ALL SCORING PROPERTIES
       const coveragePremium = parseFloat(deal.properties?.coverage_premium || 0);
       const commissionAmount = parseFloat(deal.properties?.commission_amount || 0);
@@ -119,7 +119,7 @@ class DataOrchestrator {
 
       // === EMAIL MATCHING ===
       const matchedEmails = this.matchEmailsToDeal(deal, emails, primaryContact);
-      
+
       // === CALENDAR MATCHING ===
       const matchedMeetings = this.matchCalendarToDeal(deal, calendarEvents, primaryContact);
 
@@ -133,8 +133,8 @@ class DataOrchestrator {
         ...matchedEmails.map(e => parseInt(e.timestamp)),
         ...matchedMeetings.map(m => new Date(m.start).getTime())
       ].filter(Boolean);
-      
-      const lastContactDate = allDates.length > 0 
+
+      const lastContactDate = allDates.length > 0
         ? new Date(Math.max(...allDates)).toISOString().split('T')[0]
         : null;
 
@@ -153,11 +153,11 @@ class DataOrchestrator {
         commissionPercent: commissionPercent,
         expiryDate: closeDate,
         status: this.mapDealStage(deal.properties?.dealstage),
-        
+
         // Source tracking
         sourceSystem: 'HubSpot',
         crmRecordId: deal.id,
-        
+
         // ENRICHED: Contact information
         primaryContact: primaryContact ? {
           name: `${primaryContact.firstName || ''} ${primaryContact.lastName || ''}`.trim() || 'Unknown',
@@ -170,7 +170,7 @@ class DataOrchestrator {
           phone: null,
           hubspotId: null
         },
-        
+
         // ENRICHED: Communication history
         communications: {
           totalTouchpoints: totalTouchpoints,
@@ -189,7 +189,7 @@ class DataOrchestrator {
             date: m.start
           }))
         },
-        
+
         // ENRICHED: Data source references
         sources: {
           hubspot: {
@@ -201,10 +201,10 @@ class DataOrchestrator {
             calendarEventIds: matchedMeetings.map(m => m.id)
           }
         },
-        
+
         // Legacy fields (for backwards compatibility)
         recentTouchpoints: totalTouchpoints,
-        primaryContactName: primaryContact 
+        primaryContactName: primaryContact
           ? `${primaryContact.firstName || ''} ${primaryContact.lastName || ''}`.trim()
           : this.extractContactName(dealName),
         lastEmailId: matchedEmails[0]?.id || null
@@ -275,6 +275,7 @@ class DataOrchestrator {
     const matches = [];
     const dealName = (deal.properties?.dealname || '').toLowerCase();
     const contactEmail = primaryContact?.email?.toLowerCase();
+    const companyName = primaryContact?.company?.toLowerCase();
 
     for (const event of calendarEvents) {
       let matchScore = 0;
@@ -283,8 +284,8 @@ class DataOrchestrator {
       // Check if contact email is in attendees
       if (contactEmail && event.attendees.some(attendee => {
         // Handle both string and object formats
-        const attendeeEmail = typeof attendee === 'string' 
-          ? attendee.toLowerCase() 
+        const attendeeEmail = typeof attendee === 'string'
+          ? attendee.toLowerCase()
           : (attendee?.email || attendee?.emailAddress?.address || '').toLowerCase();
         return attendeeEmail === contactEmail;
       })) {
@@ -292,6 +293,14 @@ class DataOrchestrator {
         matchReason = 'attendee_match';
       }
       // Check for company name in event summary/description
+      else if (companyName && (
+        event.summary.toLowerCase().includes(companyName) ||
+        (event.description && event.description.toLowerCase().includes(companyName))
+      )) {
+        matchScore = 70;
+        matchReason = 'company_match';
+      }
+      // Check for deal name in event summary/description
       else if (dealName && (
         event.summary.toLowerCase().includes(dealName) ||
         (event.description && event.description.toLowerCase().includes(dealName))
@@ -304,7 +313,7 @@ class DataOrchestrator {
         this.isRenewalRelated(event.summary) ||
         this.isRenewalRelated(event.description || '')
       ) {
-        matchScore = 40;
+        matchScore = 30;
         matchReason = 'renewal_keyword';
       }
 

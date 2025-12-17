@@ -48,6 +48,21 @@ class AIService {
       model: "gemini-2.5-flash",
     });
 
+    // --- PREPARE CONTEXT ---
+    const comms = renewal.communications || {};
+    const lastContact = comms.lastContactDate || "None";
+    const daysSince = lastContact !== "None"
+      ? Math.floor((new Date() - new Date(lastContact)) / (1000 * 60 * 60 * 24))
+      : "N/A";
+
+    const recentEmailSubjects = (comms.recentEmails || [])
+      .map(e => `- Email: "${e.subject}" (${e.date})`)
+      .join("\n") || "No recent emails";
+
+    const recentMeetingSummaries = (comms.recentMeetings || [])
+      .map(m => `- Meeting: "${m.summary}" (${m.date})`)
+      .join("\n") || "No recent meetings";
+
     const prompt = `
 Generate a renewal brief in JSON. Return ONLY JSON.
 
@@ -59,15 +74,24 @@ Premium: ₹${renewal.premium}
 Expiry: ${renewal.expiryDate}
 
 STATUS:
-Touchpoints: ${renewal.recentTouchpoints}
+Touchpoints: ${comms.totalTouchpoints || 0}
+Last Contact: ${lastContact} (${daysSince} days ago)
 Stage: ${renewal.status}
+
+COMMUNICATION HISTORY:
+${recentEmailSubjects}
+${recentMeetingSummaries}
 
 SCORES:
 Priority: ${score.value}
 Time Score: ${score.breakdown.timeScore}
 Premium Score: ${score.breakdown.premiumScore}
-Touchpoint Score: ${score.breakdown.touchpointScore}
-Days to Expiry: ${score.breakdown.daysToExpiry}
+
+LOGIC RULES (Apply these if relevant):
+1. GHOSTING: If days since last contact > 14, explicitly recommend "Urgent re-engagement call".
+2. MISSING FOLLOW-UP: If a meeting occurred > 2 days ago but no subsequent email, recommend "Send post-meeting summary".
+3. LOW ENGAGEMENT: If total touchpoints < 3, recommend "Increase engagement frequency".
+4. GOOD ENGAGEMENT: If touchpoints > 10 and recent contact < 7 days, recommend "Maintain current momentum".
 
 Format:
 {
@@ -115,8 +139,8 @@ Format:
     const days = brief._scoreBreakdown.daysToExpiry;
     const urgency =
       days <= 10 ? "critical" :
-      days <= 30 ? "high" :
-      days <= 60 ? "moderate" : "low";
+        days <= 30 ? "high" :
+          days <= 60 ? "moderate" : "low";
 
     const model = this.genAI.getGenerativeModel({
       model: "gemini-2.5-flash",

@@ -9,8 +9,8 @@ if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
     exit 1
 }
 
-$backendCmd = "cd 'e:/Python Projects/Broker_Copilot-master/Broker_Copilot/backend'; npm run dev"
-$frontendCmd = "cd 'e:/Python Projects/Broker_Copilot-master/Broker_Copilot/frontend'; npm run dev"
+$backendCmd = "cd '$PSScriptRoot\backend'; npm run dev"
+$frontendCmd = "cd '$PSScriptRoot\frontend'; npm run dev"
 
 # Start Backend
 Write-Host "Launching Backend..." -ForegroundColor Green

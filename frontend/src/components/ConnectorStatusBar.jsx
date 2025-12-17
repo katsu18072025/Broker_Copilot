@@ -13,12 +13,31 @@ export default function ConnectorStatusBar({ connectors, syncStatus, dataSource,
     setLocalConnectors(connectors);
   }, [connectors]);
 
+  // Detect return from Google OAuth
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const googleStatus = params.get('google');
+
+    if (googleStatus === 'connected') {
+      alert("✅ Google Data Imported");
+      // Clean URL logic to prevent showing it again on refresh
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+  }, []);
+
   const handleGoogleConnect = () => {
     console.log('🔐 Redirecting to Google OAuth...');
     window.location.href = `${API_BASE}/auth/google`;
   };
 
   const handleHubSpotConnect = async () => {
+    // 🛡️ DEPENDENCY CHECK: Ensure Google is connected first
+    const googleConnector = localConnectors.find(c => c.name.toLowerCase().includes('google'));
+    if (googleConnector && googleConnector.status !== 'connected') {
+      alert('Please connect Google (Gmail/Calendar) first.\nWe need this to sync your emails and meetings with your deals.');
+      return;
+    }
+
     if (loading) return;
     setLoading(true);
 
@@ -26,30 +45,38 @@ export default function ConnectorStatusBar({ connectors, syncStatus, dataSource,
       console.log('🔗 Testing HubSpot connection...');
       const res = await fetch(`${API_BASE}/auth/test/hubspot`);
       const data = await res.json();
-      
+
       console.log('✅ HubSpot Response:', data);
 
       if (data.success) {
         // Optimistic update - immediately show as connected
-        setLocalConnectors(prev => prev.map(c => 
-          c.name.toLowerCase().includes('hubspot') 
-            ? { ...c, status: 'connected' } 
+        setLocalConnectors(prev => prev.map(c =>
+          c.name.toLowerCase().includes('hubspot')
+            ? { ...c, status: 'connected' }
             : c
         ));
+
+        // 🔄 TRIGGER SYNC AUTOMATICALLY
+        try {
+          console.log('🔄 Auto-syncing data...');
+          await fetch(`${API_BASE}/api/sync`, { method: 'POST' });
+        } catch (e) {
+          console.error('Sync trigger failed:', e);
+        }
 
         // Notify parent to refresh all data
         if (onConnectionUpdate) {
           setTimeout(() => onConnectionUpdate(), 500);
         }
-        
-        alert(`✅ HubSpot connected! Found ${data.contactCount || 0} contacts.`);
+
+        alert("✅ HubSpot Data Imported");
       } else {
         throw new Error(data.error || 'Connection failed');
       }
     } catch (err) {
       console.error('❌ HubSpot connection error:', err);
       alert(`❌ HubSpot connection failed: ${err.message}`);
-      
+
       // Revert optimistic update on error
       setLocalConnectors(connectors);
     } finally {
@@ -59,7 +86,7 @@ export default function ConnectorStatusBar({ connectors, syncStatus, dataSource,
 
   const getConnectorConfig = (name) => {
     const lowerName = name.toLowerCase();
-    
+
     if (lowerName.includes('google') || lowerName.includes('gmail')) {
       return {
         handler: handleGoogleConnect,
@@ -68,12 +95,12 @@ export default function ConnectorStatusBar({ connectors, syncStatus, dataSource,
         isGoogle: true
       };
     }
-    
+
     if (lowerName.includes('hubspot')) {
       return {
         handler: handleHubSpotConnect,
-        btnColor: '#ff7a59',
-        btnLabel: 'Test Connection',
+        btnColor: '#4285f4',
+        btnLabel: 'Connect',
         isHubSpot: true
       };
     }
@@ -88,15 +115,15 @@ export default function ConnectorStatusBar({ connectors, syncStatus, dataSource,
   });
 
   return (
-    <div style={{ 
-      marginBottom: 16, 
-      padding: 16, 
-      background: '#071127', 
-      borderRadius: 8, 
-      border: '1px solid #1e293b' 
+    <div style={{
+      marginBottom: 16,
+      padding: 16,
+      background: '#071127',
+      borderRadius: 8,
+      border: '1px solid #1e293b'
     }}>
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
-        
+
         {localConnectors.map((c, i) => {
           const config = getConnectorConfig(c.name);
           const isConnected = c.status === 'connected';
@@ -119,15 +146,15 @@ export default function ConnectorStatusBar({ connectors, syncStatus, dataSource,
               }}
             >
               {/* Status indicator dot */}
-              <span style={{ 
-                width: 8, 
-                height: 8, 
-                borderRadius: '50%', 
+              <span style={{
+                width: 8,
+                height: 8,
+                borderRadius: '50%',
                 backgroundColor: isConnected ? '#2ecc71' : '#e74c3c',
                 boxShadow: isConnected ? '0 0 8px #2ecc71' : 'none',
                 transition: 'all 0.2s ease'
               }} />
-              
+
               <span style={{ flex: 1 }}>{c.name}</span>
 
               {/* Show connect button for disconnected connectors */}
@@ -166,12 +193,12 @@ export default function ConnectorStatusBar({ connectors, syncStatus, dataSource,
               </span>
             </div>
           )}
-          
+
           <div style={{ fontSize: 11, color: '#64748b' }}>
             {syncStatus?.recordCount || 0} records · Source:{' '}
-            <span style={{ 
+            <span style={{
               color: dataSource === 'live' ? '#2ecc71' : '#f39c12',
-              fontWeight: 600 
+              fontWeight: 600
             }}>
               {dataSource ? dataSource.toUpperCase() : 'SAMPLE'}
             </span>

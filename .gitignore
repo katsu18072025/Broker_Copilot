@@ -7,3 +7,6 @@ build/
 .vscode/
 .idea/
 *.log
+
+# Token storage (encrypted OAuth tokens)
+backend/data/tokens.json

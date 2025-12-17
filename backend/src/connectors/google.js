@@ -45,6 +45,9 @@ export class GoogleConnector {
       this.oauth2.setCredentials(tokens);
       tokenStore.setGoogleToken(tokens);
 
+      // Trigger persistence (setGoogleToken already does this, but being explicit)
+      await tokenStore.saveToDisk();
+
       return { success: true, tokens };
     } catch (err) {
       console.error("❌ Google token exchange error:", err.message);
@@ -71,6 +74,9 @@ export class GoogleConnector {
           access_token: newToken.token,
           expires_in: 3600,
         });
+
+        // Persist refreshed token
+        await tokenStore.saveToDisk();
         console.log("🔄 Google access token refreshed");
       }
     } catch (err) {
@@ -81,37 +87,77 @@ export class GoogleConnector {
   }
 
   // ===========================================================
-  // ✉️ SEND EMAIL (Base64URL compliant)
+  // ✉️ SEND EMAIL (Base64URL compliant) with attachment support
   // ===========================================================
-  async sendEmail(to, subject, body) {
+  async sendEmail(to, subject, body, htmlBody, attachments = []) {
     try {
       const auth = await this.getAuthenticatedClient();
       const gmail = google.gmail({ version: "v1", auth });
 
-      const email = [
-        `To: ${to}`,
-        `Subject: ${subject}`,
-        "Content-Type: text/plain; charset=\"UTF-8\"",
-        "MIME-Version: 1.0",
-        "",
-        body,
-      ].join("\n");
+      let email;
+
+      if (attachments.length > 0) {
+        // Multipart email with attachments
+        const boundary = `boundary_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+
+        const emailParts = [
+          `To: ${to}`,
+          `Subject: ${subject}`,
+          `MIME-Version: 1.0`,
+          `Content-Type: multipart/mixed; boundary="${boundary}"`,
+          ``,
+          `--${boundary}`,
+          `Content-Type: text/html; charset="UTF-8"`,
+          `Content-Transfer-Encoding: 7bit`,
+          ``,
+          htmlBody || body.replace(/\n/g, '<br>'),
+          ``
+        ];
+
+        // Add attachments
+        for (const attachment of attachments) {
+          emailParts.push(`--${boundary}`);
+          emailParts.push(`Content-Type: ${attachment.mimeType}; name="${attachment.filename}"`);
+          emailParts.push(`Content-Disposition: attachment; filename="${attachment.filename}"`);
+          emailParts.push(`Content-Transfer-Encoding: base64`);
+          emailParts.push(``);
+
+          // Split base64 into 76-character lines (RFC 2045)
+          const base64Data = attachment.data.toString('base64');
+          const lines = base64Data.match(/.{1,76}/g) || [];
+          emailParts.push(lines.join('\n'));
+          emailParts.push(``);
+        }
+
+        emailParts.push(`--${boundary}--`);
+        email = emailParts.join('\n');
+      } else {
+        // Simple email (existing logic)
+        email = [
+          `To: ${to}`,
+          `Subject: ${subject}`,
+          `Content-Type: text/html; charset="UTF-8"`,
+          `MIME-Version: 1.0`,
+          ``,
+          htmlBody || body.replace(/\n/g, '<br>'),
+        ].join('\n');
+      }
 
       const encoded = Buffer.from(email)
-        .toString("base64")
-        .replace(/\+/g, "-")
-        .replace(/\//g, "_")
-        .replace(/=+$/, "");
+        .toString('base64')
+        .replace(/\+/g, '-')
+        .replace(/\//g, '_')
+        .replace(/=+$/, '');
 
       const response = await gmail.users.messages.send({
-        userId: "me",
+        userId: 'me',
         requestBody: { raw: encoded },
       });
 
       return { messageId: response.data.id };
     } catch (err) {
-      console.error("❌ Gmail send error:", err.response?.data || err.message);
-      throw new Error(err.message || "Failed to send Gmail message");
+      console.error('❌ Gmail send error:', err.response?.data || err.message);
+      throw new Error(err.message || 'Failed to send Gmail message');
     }
   }
 
@@ -197,7 +243,7 @@ export class GoogleConnector {
       const events = (resp.data.items || []).map((e) => {
         const startDate = e.start?.dateTime || e.start?.date;
         const endDate = e.end?.dateTime || e.end?.date;
-        
+
         return {
           id: e.id,
           summary: e.summary || "(No title)",
@@ -239,16 +285,16 @@ export class GoogleConnector {
       console.log(`Time Range: ${timeMin.toISOString().split('T')[0]} to ${timeMax.toISOString().split('T')[0]}\n`);
 
       // Log birthdays and special occasions
-      const birthdays = events.filter(e => 
+      const birthdays = events.filter(e =>
         e.summary.toLowerCase().includes('birthday') ||
         e.recurrence?.some(r => r.includes('FREQ=YEARLY'))
       );
-      
+
       const occasions = events.filter(e => {
         const lower = e.summary.toLowerCase();
-        return lower.includes('anniversary') || 
-               lower.includes('celebration') ||
-               lower.includes('holiday');
+        return lower.includes('anniversary') ||
+          lower.includes('celebration') ||
+          lower.includes('holiday');
       });
 
       if (birthdays.length > 0) {
@@ -271,7 +317,7 @@ export class GoogleConnector {
       const now = new Date();
       const next7Days = new Date();
       next7Days.setDate(next7Days.getDate() + 7);
-      
+
       const upcomingEvents = events.filter(e => {
         const eventDate = new Date(e.start);
         return eventDate >= now && eventDate <= next7Days;

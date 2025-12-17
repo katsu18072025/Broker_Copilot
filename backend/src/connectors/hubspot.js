@@ -5,14 +5,18 @@ const HUBSPOT_ACCESS_TOKEN = process.env.HUBSPOT_ACCESS_TOKEN;
 const API_BASE = 'https://api.hubapi.com';
 
 export class HubSpotConnector {
-  
+
+  constructor() {
+    this._connected = false;
+  }
+
   isConnected() {
-    return !!HUBSPOT_ACCESS_TOKEN;
+    return this._connected;
   }
 
   async testConnection() {
     console.log('🔗 [HubSpot Connector] Testing connection...');
-    
+
     if (!HUBSPOT_ACCESS_TOKEN) {
       console.error('❌ [HubSpot Connector] No access token configured');
       return { success: false, error: 'No access token configured' };
@@ -23,23 +27,26 @@ export class HubSpotConnector {
         headers: { 'Authorization': `Bearer ${HUBSPOT_ACCESS_TOKEN}` },
         params: { limit: 1 }
       });
-      
+
       const contactCount = response.data.total || 0;
       console.log('✅ [HubSpot Connector] Connection successful!', {
         timestamp: new Date().toISOString(),
         contactCount
       });
-      
-      return { 
-        success: true, 
+
+      this._connected = true; // Mark as connected on success
+
+      return {
+        success: true,
         message: 'HubSpot connection working!',
         contactCount
       };
     } catch (error) {
       console.error('❌ [HubSpot Connector] Connection failed:', error.message);
-      return { 
-        success: false, 
-        error: error.response?.data?.message || error.message 
+      this._connected = false;
+      return {
+        success: false,
+        error: error.response?.data?.message || error.message
       };
     }
   }
@@ -49,10 +56,14 @@ export class HubSpotConnector {
    */
   async fetchDealsWithContacts() {
     if (!HUBSPOT_ACCESS_TOKEN) throw new Error('Not configured');
+    if (!this._connected) {
+      console.warn('⚠️ [HubSpot] Skipping fetch - Connector not connected (User connect required)');
+      return [];
+    }
 
     try {
       console.log('📦 [HubSpot] Fetching deals with contact associations...');
-      
+
       // Step 1: Fetch deals with associations
       const dealsResponse = await axios.get(`${API_BASE}/crm/v3/objects/deals`, {
         headers: { 'Authorization': `Bearer ${HUBSPOT_ACCESS_TOKEN}` },
@@ -83,7 +94,7 @@ export class HubSpotConnector {
       const enrichedDeals = await Promise.all(
         deals.map(async (deal) => {
           const contactIds = deal.associations?.contacts?.results?.map(c => c.id) || [];
-          
+
           // Fetch contact details if associations exist
           let primaryContact = null;
           if (contactIds.length > 0) {
@@ -97,7 +108,7 @@ export class HubSpotConnector {
                   }
                 }
               );
-              
+
               const props = contactResponse.data.properties;
               primaryContact = {
                 id: contactIds[0],
@@ -120,7 +131,7 @@ export class HubSpotConnector {
       );
 
       console.log(`✅ [HubSpot] Enriched ${enrichedDeals.filter(d => d.primaryContact).length}/${enrichedDeals.length} deals with contact info`);
-      
+
       return enrichedDeals;
 
     } catch (error) {

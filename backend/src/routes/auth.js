@@ -19,7 +19,7 @@ router.get('/debug/google-config', (req, res) => {
 });
 
 router.get('/hubspot', (req, res) => {
-  res.json({ 
+  res.json({
     message: 'HubSpot uses Private App token - no OAuth needed',
     connected: hubspotConnector.isConnected(),
     testEndpoint: '/auth/test/hubspot'
@@ -30,9 +30,9 @@ router.get('/hubspot', (req, res) => {
 router.get('/test/hubspot', async (req, res) => {
   console.log('🔐 [HubSpot Connection] Test initiated at:', new Date().toISOString());
   console.log('🔐 [HubSpot Connection] Checking if token is configured...');
-  
+
   const result = await hubspotConnector.testConnection();
-  
+
   if (result.success) {
     console.log('✅ [HubSpot Connection] SUCCESS - Connection established!', {
       timestamp: new Date().toISOString(),
@@ -45,7 +45,7 @@ router.get('/test/hubspot', async (req, res) => {
       error: result.error
     });
   }
-  
+
   res.json(result);
 });
 
@@ -79,13 +79,13 @@ router.get('/google', (req, res) => {
 // Step 2: Handle callback
 router.get('/google/callback', async (req, res) => {
   const { code } = req.query;
-  
+
   if (!code) {
     return res.redirect(`${process.env.FRONTEND_URL}?error=no_code`);
   }
 
   const result = await googleConnector.exchangeCodeForToken(code);
-  
+
   if (result.success) {
     res.redirect(`${process.env.FRONTEND_URL}?google=connected`);
   } else {
@@ -116,12 +116,12 @@ router.get('/google/calendar', async (req, res) => {
   try {
     const daysBack = parseInt(req.query.daysBack) || 90;
     const daysForward = parseInt(req.query.daysForward) || 365;
-    
+
     const events = await googleConnector.fetchCalendarEvents(daysBack, daysForward);
-    
-    res.json({ 
-      success: true, 
-      count: events.length, 
+
+    res.json({
+      success: true,
+      count: events.length,
       events,
       query: { daysBack, daysForward }
     });
@@ -134,28 +134,28 @@ router.get('/google/calendar', async (req, res) => {
 router.post('/google/calendar/create', async (req, res) => {
   try {
     const eventData = req.body;
-    
+
     // Validate required fields
     if (!eventData.summary) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'Event summary (title) is required' 
+      return res.status(400).json({
+        success: false,
+        error: 'Event summary (title) is required'
       });
     }
 
     // Validate date/time based on event type
     if (eventData.isAllDay) {
       if (!eventData.startDate) {
-        return res.status(400).json({ 
-          success: false, 
-          error: 'startDate is required for all-day events (format: YYYY-MM-DD)' 
+        return res.status(400).json({
+          success: false,
+          error: 'startDate is required for all-day events (format: YYYY-MM-DD)'
         });
       }
     } else {
       if (!eventData.startDateTime || !eventData.endDateTime) {
-        return res.status(400).json({ 
-          success: false, 
-          error: 'startDateTime and endDateTime are required for timed events (ISO 8601 format)' 
+        return res.status(400).json({
+          success: false,
+          error: 'startDateTime and endDateTime are required for timed events (ISO 8601 format)'
         });
       }
     }

@@ -12,6 +12,7 @@ import { hubspotConnector } from "./src/connectors/hubspot.js";
 import { googleConnector } from "./src/connectors/google.js";
 import { computeScore, withScores, logItemStructure } from "./src/utils/scoreCalculator.js";
 import calendarSyncRoutes from "./src/routes/calendarSync.js";
+import { generateBriefPDF } from "./src/services/pdfGenerator.js";
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -77,15 +78,34 @@ app.get("/api/renewals/:id/brief", async (req, res) => {
   }
 });
 
+// Generate & Download PDF
+app.get("/api/renewals/:id/pdf", async (req, res) => {
+  const synced = dataOrchestrator.getRenewals();
+  const renewals = synced.length ? synced : sampleRenewals;
+
+  const item = renewals.find((r) => r.id === req.params.id);
+  if (!item) return res.status(404).json({ error: "not found" });
+
+  try {
+    const score = computeScore(item);
+    const brief = await aiService.generateBrief(item, score);
+    const pdfBuffer = await generateBriefPDF(brief, item);
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${item.clientName.replace(/[^a-z0-9]/gi, '_')}_brief.pdf"`);
+    res.send(pdfBuffer);
+  } catch (e) {
+    console.error("PDF Generation Error:", e);
+    res.status(500).json({ error: "Failed to generate PDF" });
+  }
+});
+
 // Connector status
 app.get("/api/connectors", async (req, res) => {
   const syncStatus = dataOrchestrator.getSyncStatus();
 
-  let hubspotStatus = "disconnected";
-  try {
-    const test = await hubspotConnector.testConnection();
-    hubspotStatus = test.success ? "connected" : "disconnected";
-  } catch { }
+  let hubspotStatus = hubspotConnector.isConnected() ? "connected" : "disconnected";
+  // Manual connect requirement: Do NOT auto-test here. Status depends on manual trigger.
 
   res.json({
     connectors: [
@@ -102,6 +122,15 @@ app.get("/api/connectors", async (req, res) => {
       },
     ],
     syncStatus,
+  });
+});
+
+// Token health check
+app.get("/api/token-health", (req, res) => {
+  const health = tokenStore.getHealthStatus();
+  res.json({
+    ...health,
+    timestamp: new Date().toISOString()
   });
 });
 
@@ -153,9 +182,9 @@ app.post("/api/qa", async (req, res) => {
   }
 });
 
-// ---------------- SEND EMAIL (Updated to support HTML) ----------------
+// ---------------- SEND EMAIL (Updated to support HTML and Attachments) ----------------
 app.post("/api/send-email", async (req, res) => {
-  const { to, subject, body, htmlBody, renewalId } = req.body;
+  const { to, subject, body, htmlBody, renewalId, attachBrief, briefData } = req.body;
 
   if (!to || !subject || !body) {
     return res.status(400).json({
@@ -173,14 +202,34 @@ app.post("/api/send-email", async (req, res) => {
   }
 
   try {
-    // Send with both plain text and HTML to prevent line wrap issues
-    const result = await googleConnector.sendEmail(to, subject, body, htmlBody);
+    const attachments = [];
+
+    // Generate PDF attachment if requested
+    if (attachBrief && briefData) {
+      const { generateBriefPDF } = await import('./src/services/pdfGenerator.js');
+      const pdfBuffer = await generateBriefPDF(briefData, briefData.item || briefData);
+
+      const clientName = (briefData.item?.clientName || briefData.clientName || 'Renewal')
+        .replace(/[^a-zA-Z0-9]/g, '_');
+
+      attachments.push({
+        filename: `${clientName}_AI_Brief.pdf`,
+        mimeType: 'application/pdf',
+        data: pdfBuffer
+      });
+
+      console.log(`📎 Generated PDF attachment: ${clientName}_AI_Brief.pdf`);
+    }
+
+    const result = await googleConnector.sendEmail(to, subject, body, htmlBody, attachments);
 
     console.log("📧 Email sent:", {
       to,
       subject,
       messageId: result.messageId,
       hasHtml: !!htmlBody,
+      hasAttachments: attachments.length > 0,
+      attachmentCount: attachments.length,
       renewalId,
     });
 
@@ -188,6 +237,7 @@ app.post("/api/send-email", async (req, res) => {
       success: true,
       provider: "Gmail",
       messageId: result.messageId,
+      attachmentCount: attachments.length
     });
   } catch (error) {
     console.error("❌ Email send error:", error);
@@ -217,8 +267,48 @@ app.post("/api/populate-calendar", async (req, res) => {
 
 // ---------------- START SERVER ----------------
 
-app.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
-  console.log(`🔗 Google OAuth: http://localhost:${PORT}/auth/google`);
+// Only start server if run directly (not imported)
+if (process.argv[1] === import.meta.filename) {
+  // Load tokens from disk on startup
+  await tokenStore.loadFromDisk();
+
+  app.listen(PORT, () => {
+    console.log(`🔗 Google OAuth: http://localhost:${PORT}/auth/google`);
+    console.log(`💾 Token persistence: ${tokenStore.getHealthStatus().encryptionEnabled ? 'ENABLED' : 'DISABLED (in-memory only)'}`);
+
+    // 🔄 AUTO-SYNC: Start initial sync
+    console.log('⏳ Starting initial auto-sync...');
+    dataOrchestrator.syncAllData()
+      .then(result => console.log(`✅ Initial sync complete: ${result.renewalCount} records`))
+      .catch(err => console.error('❌ Initial sync failed:', err.message));
+
+    // ⏰ PERIODIC SYNC: Every 30 minutes
+    setInterval(() => {
+      console.log('⏰ Running periodic background sync...');
+      dataOrchestrator.syncAllData().catch(err => console.error('❌ Background sync failed:', err.message));
+    }, 30 * 60 * 1000);
+  });
+}
+
+export default app;
+
+// Graceful shutdown handler
+process.on('SIGINT', async () => {
+  console.log('\n🛑 Server shutting down gracefully...');
+
+  // Incognito mode: clear tokens on shutdown
+  await tokenStore.clearOnShutdown();
+
+  console.log('✅ Shutdown complete');
+  process.exit(0);
 });
 
+process.on('SIGTERM', async () => {
+  console.log('\n🛑 Server received SIGTERM...');
+
+  // Incognito mode: clear tokens on shutdown
+  await tokenStore.clearOnShutdown();
+
+  console.log('✅ Shutdown complete');
+  process.exit(0);
+});
