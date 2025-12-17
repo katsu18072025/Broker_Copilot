@@ -11,6 +11,7 @@ import { aiService } from "./src/services/aiService.js";
 import { hubspotConnector } from "./src/connectors/hubspot.js";
 import { googleConnector } from "./src/connectors/google.js";
 import { computeScore, withScores, logItemStructure } from "./src/utils/scoreCalculator.js";
+import { processRenewalsAndUpdateCalendar } from "./scripts/renewals-processor.js";
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -201,8 +202,41 @@ app.get("/", (req, res) => {
   });
 });
 
+app.post("/api/populate-calendar", async (req, res) => {
+  if (!tokenStore.isGoogleConnected()) {
+    return res.status(403).json({ error: "Google not connected" });
+  }
+  try {
+    await processRenewalsAndUpdateCalendar();
+    res.json({ success: true, message: "Calendar populated!" });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ---------------- START SERVER ----------------
+
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
   console.log(`🔗 Google OAuth: http://localhost:${PORT}/auth/google`);
 });
+
+/*
+app.listen(PORT, async () => {  // Make async
+  console.log(`🚀 Server running on port ${PORT}`);
+  console.log(`🔗 Google OAuth: http://localhost:${PORT}/auth/google`);
+  
+  // Run processor on startup (once authenticated)
+  try {
+    if (tokenStore.isGoogleConnected()) {
+      await processRenewalsAndUpdateCalendar();
+      console.log('📅 Calendar populated!');
+    } else {
+      console.log('⚠️ Google not connected. Authenticate first, then restart.');
+    }
+  }
+  catch (e) {
+    console.error('❌ Error populating calendar on startup:', e);
+  }
+});
+*/

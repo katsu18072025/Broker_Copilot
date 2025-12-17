@@ -6,6 +6,7 @@ import { computeScore } from './utils/scoreCalculator'; // Keep for potential cl
 
 import Header from './components/Header';
 import ConnectorStatusBar from './components/ConnectorStatusBar';
+import UpcomingEventsPanel from './components/UpcomingEventsPanel';
 import RenewalPipeline from './components/RenewalPipeline';
 import RenewalDetail from './components/RenewalDetail';
 import LoginModal from './components/LoginModal';
@@ -61,7 +62,13 @@ export default function App() {
       />
 
       <div style={{ display: 'flex', gap: 16, marginTop: 16 }}>
-        <RenewalPipeline items={items} selected={selected} onSelect={setSelected} />
+        {/* Left sidebar with Upcoming Events and Pipeline */}
+        <div style={{ width: 320, display: 'flex', flexDirection: 'column', gap: 0 }}>
+          <UpcomingEventsPanel />
+          <RenewalPipeline items={items} selected={selected} onSelect={setSelected} />
+        </div>
+
+        {/* Main content area */}
         <RenewalDetail item={selected} brief={brief} computeScore={computeScore} />
       </div>
 

@@ -1,34 +1,32 @@
-// frontend/src/components/ActionPanel.jsx - Enhanced with Editable Templates
+// frontend/src/components/ActionPanel.jsx
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
+import MeetingScheduler from './MeetingScheduler';
 
 export default function ActionPanel({ brief, item }) {
   const [sending, setSending] = useState(false);
   const [showEmailEditor, setShowEmailEditor] = useState(false);
+  const [showMeetingScheduler, setShowMeetingScheduler] = useState(false);
   const [editableSubject, setEditableSubject] = useState('');
   const [editableBody, setEditableBody] = useState('');
   const [recipientEmail, setRecipientEmail] = useState('');
 
-  // Update editable content when brief changes
   useEffect(() => {
     if (brief?.outreachTemplate && item) {
       const template = typeof brief.outreachTemplate === 'string' 
         ? brief.outreachTemplate 
         : JSON.stringify(brief.outreachTemplate);
       
-      // Extract subject from template
       const subjectMatch = template.match(/Subject:\s*(.+)/);
       const subject = subjectMatch 
         ? subjectMatch[1].trim() 
         : `${item.clientName} - Renewal Discussion`;
       
-      // Remove subject line from body
       const body = template.replace(/Subject:.*?\n\n?/, '');
 
       setEditableSubject(subject);
       setEditableBody(body);
 
-      // Set default recipient
       if (item.primaryContact?.email) {
         setRecipientEmail(item.primaryContact.email);
       } else {
@@ -49,14 +47,6 @@ export default function ActionPanel({ brief, item }) {
     win.print();
   };
 
-  const openEmailEditor = () => {
-    setShowEmailEditor(true);
-  };
-
-  const closeEmailEditor = () => {
-    setShowEmailEditor(false);
-  };
-
   const sendEmail = async () => {
     if (!editableSubject || !editableBody || !recipientEmail) {
       alert('❌ Please fill in all fields (recipient, subject, and body)');
@@ -65,22 +55,21 @@ export default function ActionPanel({ brief, item }) {
 
     setSending(true);
     try {
-      // Convert plain text to HTML to prevent Gmail line wrapping issues
       const htmlBody = editableBody
-        .split('\n\n')  // Split by double newlines (paragraphs)
-        .map(para => `<p>${para.replace(/\n/g, '<br>')}</p>`)  // Wrap in <p> tags, single newlines become <br>
+        .split('\n\n')
+        .map(para => `<p>${para.replace(/\n/g, '<br>')}</p>`)
         .join('');
 
       const response = await axios.post('/api/send-email', {
         to: recipientEmail,
         subject: editableSubject,
         body: editableBody,
-        htmlBody: htmlBody,  // Send both plain text and HTML
+        htmlBody: htmlBody,
         renewalId: item.id
       });
 
       if (response.data.success) {
-        alert(`✅ Email sent successfully to ${recipientEmail}!\n\nProvider: ${response.data.provider}\nMessage ID: ${response.data.messageId}`);
+        alert(`✅ Email sent successfully to ${recipientEmail}!`);
         setShowEmailEditor(false);
       } else {
         throw new Error(response.data.error || 'Failed to send');
@@ -117,7 +106,7 @@ export default function ActionPanel({ brief, item }) {
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         <button 
-          onClick={openEmailEditor} 
+          onClick={() => setShowEmailEditor(true)} 
           disabled={!brief}
           style={{
             padding: '8px 12px',
@@ -133,15 +122,36 @@ export default function ActionPanel({ brief, item }) {
         >
           📧 Compose & Send Email
         </button>
+
+        <button 
+          onClick={() => setShowMeetingScheduler(true)} 
+          disabled={!item}
+          style={{
+            padding: '8px 12px',
+            background: !item ? '#555' : '#3b82f6',
+            border: 'none',
+            color: 'white',
+            borderRadius: 6,
+            fontSize: 13,
+            fontWeight: 'bold',
+            cursor: !item ? 'not-allowed' : 'pointer',
+            opacity: !item ? 0.6 : 1
+          }}
+        >
+          📅 Schedule Meeting
+        </button>
         
         <button 
           onClick={copyTemplate} 
           disabled={!brief}
-          className="btn"
           style={{
+            padding: '8px 12px',
             background: '#3498db',
             border: 'none',
             color: 'white',
+            borderRadius: 6,
+            fontSize: 13,
+            fontWeight: 600,
             cursor: !brief ? 'not-allowed' : 'pointer',
             opacity: !brief ? 0.6 : 1
           }}
@@ -152,11 +162,14 @@ export default function ActionPanel({ brief, item }) {
         <button 
           onClick={printBrief} 
           disabled={!brief}
-          className="btn"
           style={{
+            padding: '8px 12px',
             background: '#95a5a6',
             border: 'none',
             color: 'white',
+            borderRadius: 6,
+            fontSize: 13,
+            fontWeight: 600,
             cursor: !brief ? 'not-allowed' : 'pointer',
             opacity: !brief ? 0.6 : 1
           }}
@@ -195,7 +208,7 @@ export default function ActionPanel({ brief, item }) {
             }}>
               <h3 style={{ margin: 0, color: '#e2e8f0' }}>Compose Outreach Email</h3>
               <button 
-                onClick={closeEmailEditor}
+                onClick={() => setShowEmailEditor(false)}
                 style={{
                   background: 'transparent',
                   border: 'none',
@@ -303,7 +316,7 @@ export default function ActionPanel({ brief, item }) {
               justifyContent: 'flex-end' 
             }}>
               <button
-                onClick={closeEmailEditor}
+                onClick={() => setShowEmailEditor(false)}
                 style={{
                   padding: '10px 20px',
                   background: '#334155',
@@ -336,7 +349,6 @@ export default function ActionPanel({ brief, item }) {
               </button>
             </div>
 
-            {/* AI-generated notice */}
             {brief?._aiGenerated && (
               <div style={{
                 marginTop: 16,
@@ -353,6 +365,14 @@ export default function ActionPanel({ brief, item }) {
             )}
           </div>
         </div>
+      )}
+
+      {/* Meeting Scheduler Modal */}
+      {showMeetingScheduler && (
+        <MeetingScheduler 
+          item={item} 
+          onClose={() => setShowMeetingScheduler(false)} 
+        />
       )}
     </div>
   );
