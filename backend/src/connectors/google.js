@@ -5,9 +5,10 @@ import { tokenStore } from "../utils/tokenStore.js";
 /**
  * Google Connector for Gmail + Calendar
  * Fully supports:
- * - Email send (HTML and plain text)
+ * - Email send
  * - Email fetch (metadata)
- * - Calendar fetch
+ * - Calendar fetch (with full details)
+ * - Calendar event creation
  * - Auto token refresh
  */
 export class GoogleConnector {
@@ -80,45 +81,21 @@ export class GoogleConnector {
   }
 
   // ===========================================================
-  // ✉️ SEND EMAIL (HTML + Plain Text multipart)
+  // ✉️ SEND EMAIL (Base64URL compliant)
   // ===========================================================
-  async sendEmail(to, subject, body, htmlBody = null) {
+  async sendEmail(to, subject, body) {
     try {
       const auth = await this.getAuthenticatedClient();
       const gmail = google.gmail({ version: "v1", auth });
 
-      // Create multipart MIME message with both HTML and plain text
-      const boundary = "boundary_" + Math.random().toString(36).substring(2);
-      
-      const messageParts = [
+      const email = [
         `To: ${to}`,
         `Subject: ${subject}`,
+        "Content-Type: text/plain; charset=\"UTF-8\"",
         "MIME-Version: 1.0",
-        `Content-Type: multipart/alternative; boundary="${boundary}"`,
-        "",
-        `--${boundary}`,
-        "Content-Type: text/plain; charset=UTF-8",
-        "Content-Transfer-Encoding: 7bit",
         "",
         body,
-        "",
-      ];
-
-      // Add HTML part if provided
-      if (htmlBody) {
-        messageParts.push(
-          `--${boundary}`,
-          "Content-Type: text/html; charset=UTF-8",
-          "Content-Transfer-Encoding: 7bit",
-          "",
-          htmlBody,
-          ""
-        );
-      }
-
-      messageParts.push(`--${boundary}--`);
-
-      const email = messageParts.join("\n");
+      ].join("\n");
 
       const encoded = Buffer.from(email)
         .toString("base64")
@@ -129,13 +106,6 @@ export class GoogleConnector {
       const response = await gmail.users.messages.send({
         userId: "me",
         requestBody: { raw: encoded },
-      });
-
-      console.log("✅ Email sent successfully:", {
-        messageId: response.data.id,
-        to,
-        subject,
-        hasHtml: !!htmlBody
       });
 
       return { messageId: response.data.id };
@@ -202,9 +172,9 @@ export class GoogleConnector {
   }
 
   // ===========================================================
-  // 📅 FETCH CALENDAR EVENTS
+  // 📅 FETCH CALENDAR EVENTS (Enhanced with full details)
   // ===========================================================
-  async fetchCalendarEvents(daysBack = 90) {
+  async fetchCalendarEvents(daysBack = 90, daysForward = 365) {
     try {
       const auth = await this.getAuthenticatedClient();
       const calendar = google.calendar({ version: "v3", auth });
@@ -212,26 +182,202 @@ export class GoogleConnector {
       const timeMin = new Date();
       timeMin.setDate(timeMin.getDate() - daysBack);
 
+      const timeMax = new Date();
+      timeMax.setDate(timeMax.getDate() + daysForward);
+
       const resp = await calendar.events.list({
         calendarId: "primary",
         timeMin: timeMin.toISOString(),
-        maxResults: 100,
+        timeMax: timeMax.toISOString(),
+        maxResults: 250,
         singleEvents: true,
         orderBy: "startTime",
       });
 
-      return (resp.data.items || []).map((e) => ({
-        id: e.id,
-        summary: e.summary,
-        description: e.description,
-        start: e.start?.dateTime || e.start?.date,
-        end: e.end?.dateTime || e.end?.date,
-        attendees: e.attendees?.map((a) => a.email) || [],
-        organizer: e.organizer?.email || "",
-      }));
+      const events = (resp.data.items || []).map((e) => {
+        const startDate = e.start?.dateTime || e.start?.date;
+        const endDate = e.end?.dateTime || e.end?.date;
+        
+        return {
+          id: e.id,
+          summary: e.summary || "(No title)",
+          description: e.description || "",
+          location: e.location || "",
+          start: startDate,
+          end: endDate,
+          startDateTime: e.start?.dateTime || null,
+          startDate: e.start?.date || null,
+          endDateTime: e.end?.dateTime || null,
+          endDate: e.end?.date || null,
+          isAllDay: !e.start?.dateTime, // All-day events don't have dateTime
+          attendees: e.attendees?.map((a) => ({
+            email: a.email,
+            name: a.displayName || a.email,
+            responseStatus: a.responseStatus || "needsAction",
+            organizer: a.organizer || false,
+          })) || [],
+          organizer: {
+            email: e.organizer?.email || "",
+            name: e.organizer?.displayName || e.organizer?.email || "",
+            self: e.organizer?.self || false,
+          },
+          status: e.status || "confirmed",
+          htmlLink: e.htmlLink || "",
+          created: e.created,
+          updated: e.updated,
+          recurringEventId: e.recurringEventId || null,
+          recurrence: e.recurrence || null,
+          reminders: e.reminders?.overrides || [],
+          colorId: e.colorId || null,
+          visibility: e.visibility || "default",
+        };
+      });
+
+      // Log events to terminal
+      console.log("\n📅 ========== CALENDAR EVENTS FETCHED ==========");
+      console.log(`Total Events: ${events.length}`);
+      console.log(`Time Range: ${timeMin.toISOString().split('T')[0]} to ${timeMax.toISOString().split('T')[0]}\n`);
+
+      // Log birthdays and special occasions
+      const birthdays = events.filter(e => 
+        e.summary.toLowerCase().includes('birthday') ||
+        e.recurrence?.some(r => r.includes('FREQ=YEARLY'))
+      );
+      
+      const occasions = events.filter(e => {
+        const lower = e.summary.toLowerCase();
+        return lower.includes('anniversary') || 
+               lower.includes('celebration') ||
+               lower.includes('holiday');
+      });
+
+      if (birthdays.length > 0) {
+        console.log(`🎂 Found ${birthdays.length} Birthday(s):`);
+        birthdays.forEach(b => {
+          console.log(`   - ${b.summary} on ${b.start}`);
+        });
+        console.log();
+      }
+
+      if (occasions.length > 0) {
+        console.log(`🎉 Found ${occasions.length} Special Occasion(s):`);
+        occasions.forEach(o => {
+          console.log(`   - ${o.summary} on ${o.start}`);
+        });
+        console.log();
+      }
+
+      // Log upcoming events (next 7 days)
+      const now = new Date();
+      const next7Days = new Date();
+      next7Days.setDate(next7Days.getDate() + 7);
+      
+      const upcomingEvents = events.filter(e => {
+        const eventDate = new Date(e.start);
+        return eventDate >= now && eventDate <= next7Days;
+      });
+
+      if (upcomingEvents.length > 0) {
+        console.log(`📆 Upcoming Events (Next 7 Days): ${upcomingEvents.length}`);
+        upcomingEvents.slice(0, 5).forEach(e => {
+          const dateStr = new Date(e.start).toLocaleString('en-IN', {
+            weekday: 'short',
+            month: 'short',
+            day: 'numeric',
+            hour: e.isAllDay ? undefined : '2-digit',
+            minute: e.isAllDay ? undefined : '2-digit'
+          });
+          console.log(`   - ${e.summary} | ${dateStr}${e.isAllDay ? ' (All Day)' : ''}`);
+          if (e.attendees.length > 0) {
+            console.log(`     Attendees: ${e.attendees.map(a => a.name || a.email).join(', ')}`);
+          }
+        });
+        console.log();
+      }
+
+      console.log("========== END CALENDAR FETCH ==========\n");
+
+      return events;
     } catch (err) {
       console.error("❌ Calendar fetch error:", err.message);
       return [];
+    }
+  }
+
+  // ===========================================================
+  // 📅 CREATE CALENDAR EVENT
+  // ===========================================================
+  async createCalendarEvent(eventData) {
+    try {
+      const auth = await this.getAuthenticatedClient();
+      const calendar = google.calendar({ version: "v3", auth });
+
+      // Build event object
+      const event = {
+        summary: eventData.summary,
+        description: eventData.description || "",
+        location: eventData.location || "",
+        start: {},
+        end: {},
+        attendees: (eventData.attendees || []).map(email => ({ email })),
+        reminders: {
+          useDefault: false,
+          overrides: eventData.reminders || [
+            { method: "email", minutes: 24 * 60 },
+            { method: "popup", minutes: 30 },
+          ],
+        },
+      };
+
+      // Handle all-day vs timed events
+      if (eventData.isAllDay) {
+        event.start.date = eventData.startDate; // Format: 'YYYY-MM-DD'
+        event.end.date = eventData.endDate || eventData.startDate;
+      } else {
+        event.start.dateTime = eventData.startDateTime; // Format: ISO 8601
+        event.start.timeZone = eventData.timeZone || "Asia/Kolkata";
+        event.end.dateTime = eventData.endDateTime;
+        event.end.timeZone = eventData.timeZone || "Asia/Kolkata";
+      }
+
+      // Add recurrence if specified (e.g., for birthdays)
+      if (eventData.recurrence) {
+        event.recurrence = eventData.recurrence;
+      }
+
+      const response = await calendar.events.insert({
+        calendarId: "primary",
+        requestBody: event,
+      });
+
+      const created = response.data;
+
+      // Log to terminal
+      console.log("\n✅ ========== CALENDAR EVENT CREATED ==========");
+      console.log(`Event ID: ${created.id}`);
+      console.log(`Summary: ${created.summary}`);
+      console.log(`Start: ${created.start?.dateTime || created.start?.date}`);
+      console.log(`End: ${created.end?.dateTime || created.end?.date}`);
+      if (created.description) console.log(`Description: ${created.description}`);
+      if (created.location) console.log(`Location: ${created.location}`);
+      if (created.attendees?.length > 0) {
+        console.log(`Attendees: ${created.attendees.map(a => a.email).join(', ')}`);
+      }
+      if (created.recurrence) {
+        console.log(`Recurrence: ${created.recurrence.join(', ')}`);
+      }
+      console.log(`Link: ${created.htmlLink}`);
+      console.log("========== END EVENT CREATION ==========\n");
+
+      return {
+        success: true,
+        eventId: created.id,
+        htmlLink: created.htmlLink,
+        event: created,
+      };
+    } catch (err) {
+      console.error("❌ Calendar event creation error:", err.message);
+      throw new Error(err.message || "Failed to create calendar event");
     }
   }
 
