@@ -281,7 +281,13 @@ class DataOrchestrator {
       let matchReason = '';
 
       // Check if contact email is in attendees
-      if (contactEmail && event.attendees.some(email => email.toLowerCase() === contactEmail)) {
+      if (contactEmail && event.attendees.some(attendee => {
+        // Handle both string and object formats
+        const attendeeEmail = typeof attendee === 'string' 
+          ? attendee.toLowerCase() 
+          : (attendee?.email || attendee?.emailAddress?.address || '').toLowerCase();
+        return attendeeEmail === contactEmail;
+      })) {
         matchScore = 100;
         matchReason = 'attendee_match';
       }

@@ -102,8 +102,66 @@ router.get('/test/google', async (req, res) => {
 // Test fetching emails
 router.get('/google/emails', async (req, res) => {
   try {
-    const emails = await googleConnector.fetchEmails(5);
+    const emails = await googleConnector.fetchEmailsEnriched(5);
     res.json({ success: true, count: emails.length, emails });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ============ CALENDAR ENDPOINTS ============
+
+// Fetch calendar events
+router.get('/google/calendar', async (req, res) => {
+  try {
+    const daysBack = parseInt(req.query.daysBack) || 90;
+    const daysForward = parseInt(req.query.daysForward) || 365;
+    
+    const events = await googleConnector.fetchCalendarEvents(daysBack, daysForward);
+    
+    res.json({ 
+      success: true, 
+      count: events.length, 
+      events,
+      query: { daysBack, daysForward }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Create calendar event
+router.post('/google/calendar/create', async (req, res) => {
+  try {
+    const eventData = req.body;
+    
+    // Validate required fields
+    if (!eventData.summary) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Event summary (title) is required' 
+      });
+    }
+
+    // Validate date/time based on event type
+    if (eventData.isAllDay) {
+      if (!eventData.startDate) {
+        return res.status(400).json({ 
+          success: false, 
+          error: 'startDate is required for all-day events (format: YYYY-MM-DD)' 
+        });
+      }
+    } else {
+      if (!eventData.startDateTime || !eventData.endDateTime) {
+        return res.status(400).json({ 
+          success: false, 
+          error: 'startDateTime and endDateTime are required for timed events (ISO 8601 format)' 
+        });
+      }
+    }
+
+    const result = await googleConnector.createCalendarEvent(eventData);
+    res.json(result);
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
