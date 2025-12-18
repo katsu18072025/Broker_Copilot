@@ -1,5 +1,6 @@
 // frontend/src/components/MeetingScheduler.jsx
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import axios from 'axios';
 
 export default function MeetingScheduler({ item, onClose }) {
@@ -9,7 +10,7 @@ export default function MeetingScheduler({ item, onClose }) {
   const [creating, setCreating] = useState(false);
   const [meetingTitle, setMeetingTitle] = useState('');
   const [meetingDescription, setMeetingDescription] = useState('');
-  const [duration, setDuration] = useState(30); // minutes
+  const [duration, setDuration] = useState(30);
 
   useEffect(() => {
     if (item) {
@@ -17,22 +18,23 @@ export default function MeetingScheduler({ item, onClose }) {
       setMeetingDescription(`Policy: ${item.productLine} (${item.policyNumber})\nExpiry: ${item.expiryDate}\nPremium: ₹${item.premium?.toLocaleString()}`);
       fetchAvailableSlots();
     }
+
+    // Lock body scroll
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = 'auto'; };
   }, [item]);
 
   const fetchAvailableSlots = async () => {
     setLoading(true);
     try {
-      // Fetch calendar events for next 7 days
       const response = await axios.get('/auth/google/calendar', {
         params: { daysBack: 0, daysForward: 7 }
       });
-
       const events = response.data.events || [];
       const slots = generateAvailableSlots(events);
       setAvailableSlots(slots);
     } catch (error) {
       console.error('Failed to fetch calendar:', error);
-      alert('Failed to load calendar availability');
     } finally {
       setLoading(false);
     }
@@ -41,29 +43,23 @@ export default function MeetingScheduler({ item, onClose }) {
   const generateAvailableSlots = (events) => {
     const slots = [];
     const now = new Date();
-    const businessHours = { start: 9, end: 18 }; // 9 AM to 6 PM
+    const businessHours = { start: 9, end: 18 };
 
-    // Generate slots for next 7 days
     for (let dayOffset = 0; dayOffset < 7; dayOffset++) {
       const date = new Date(now);
       date.setDate(date.getDate() + dayOffset);
       date.setHours(0, 0, 0, 0);
 
-      // Skip weekends
       if (date.getDay() === 0 || date.getDay() === 6) continue;
 
-      // Generate hourly slots
       for (let hour = businessHours.start; hour < businessHours.end; hour++) {
         const slotStart = new Date(date);
         slotStart.setHours(hour, 0, 0, 0);
-
         const slotEnd = new Date(slotStart);
         slotEnd.setMinutes(slotEnd.getMinutes() + duration);
 
-        // Skip past times
         if (slotStart <= now) continue;
 
-        // Check if slot conflicts with existing events
         const hasConflict = events.some(event => {
           const eventStart = new Date(event.start);
           const eventEnd = new Date(event.end);
@@ -79,8 +75,7 @@ export default function MeetingScheduler({ item, onClose }) {
         }
       }
     }
-
-    return slots.slice(0, 20); // Show max 20 slots
+    return slots.slice(0, 18);
   };
 
   const formatSlotLabel = (date) => {
@@ -89,29 +84,16 @@ export default function MeetingScheduler({ item, onClose }) {
     tomorrow.setDate(tomorrow.getDate() + 1);
 
     let dayLabel;
-    if (date.toDateString() === today.toDateString()) {
-      dayLabel = 'Today';
-    } else if (date.toDateString() === tomorrow.toDateString()) {
-      dayLabel = 'Tomorrow';
-    } else {
-      dayLabel = date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-    }
+    if (date.toDateString() === today.toDateString()) dayLabel = 'Today';
+    else if (date.toDateString() === tomorrow.toDateString()) dayLabel = 'Tomorrow';
+    else dayLabel = date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
 
-    const timeLabel = date.toLocaleTimeString('en-US', {
-      hour: 'numeric',
-      minute: '2-digit',
-      hour12: true
-    });
-
+    const timeLabel = date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
     return `${dayLabel}, ${timeLabel}`;
   };
 
   const handleSchedule = async () => {
-    if (!selectedSlot) {
-      alert('Please select a time slot');
-      return;
-    }
-
+    if (!selectedSlot) return;
     setCreating(true);
     try {
       const eventData = {
@@ -122,299 +104,136 @@ export default function MeetingScheduler({ item, onClose }) {
         timeZone: 'Asia/Kolkata',
         attendees: item.primaryContact?.email ? [item.primaryContact.email] : [],
         reminders: [
-          { method: 'email', minutes: 1440 }, // 1 day before
+          { method: 'email', minutes: 1440 },
           { method: 'popup', minutes: 30 }
         ]
       };
-
       const response = await axios.post('/auth/google/calendar/create', eventData);
-
       if (response.data.success) {
-        alert(`Meeting scheduled successfully!\n\nTime: ${selectedSlot.label}\nAttendee: ${item.primaryContact?.email || 'No attendee'}\n\nView in calendar: ${response.data.htmlLink}`);
+        alert('Meeting scheduled successfully!');
         onClose();
       }
     } catch (error) {
-      console.error('Failed to create meeting:', error);
-      alert('Failed to schedule meeting: ' + (error.response?.data?.error || error.message));
+      alert('Failed: ' + (error.response?.data?.error || error.message));
     } finally {
       setCreating(false);
     }
   };
 
-  return (
+  const modalContent = (
     <div style={{
       position: 'fixed',
       inset: 0,
-      background: 'rgba(0,0,0,0.85)',
+      background: 'rgba(2, 6, 18, 0.95)',
+      backdropFilter: 'blur(20px)',
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
-      zIndex: 1000,
-      padding: 20
+      zIndex: 99999,
+      padding: 40
     }}>
-      <div style={{
-        background: '#071127',
-        padding: 24,
-        borderRadius: 12,
+      <div className="glass-card animate-modal-in" style={{
+        padding: 40,
         width: '100%',
-        maxWidth: 700,
-        maxHeight: '90vh',
+        maxWidth: 720,
+        maxHeight: '85vh',
         overflow: 'auto',
-        border: '1px solid #1e293b'
+        border: '1px solid rgba(255,255,255,0.12)',
+        position: 'relative',
+        boxShadow: '0 0 100px -20px rgba(0, 0, 0, 0.8)'
       }}>
-        <div style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          marginBottom: 20
-        }}>
-          <h3 style={{ margin: 0, color: '#e2e8f0' }}>Schedule Meeting</h3>
-          <button
-            onClick={onClose}
-            style={{
-              background: 'transparent',
-              border: 'none',
-              color: '#94a3b8',
-              fontSize: 24,
-              cursor: 'pointer',
-              padding: 0,
-              lineHeight: 1
-            }}
-          >
-            ×
-          </button>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 32 }}>
+          <div>
+            <h2 style={{ margin: 0, fontSize: 26, fontWeight: 800, color: 'var(--text-primary)', letterSpacing: '-0.02em' }}>Schedule Discovery Meeting</h2>
+            <p style={{ margin: '8px 0 0', color: 'var(--text-secondary)', fontSize: 13, display: 'flex', alignItems: 'center', gap: 6 }}>
+              Find the perfect time for <span style={{ color: 'var(--accent-secondary)', fontWeight: 600 }}>{item?.clientName}</span>
+            </p>
+          </div>
+          <button onClick={onClose} style={{
+            background: 'rgba(255,255,255,0.05)',
+            border: '1px solid rgba(255,255,255,0.1)',
+            color: 'var(--text-secondary)',
+            width: 36, height: 36, borderRadius: '50%',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', fontSize: 20
+          }}>×</button>
         </div>
 
-        {/* Meeting Details */}
-        <div style={{ marginBottom: 20 }}>
-          <div style={{ marginBottom: 12 }}>
-            <label style={{
-              display: 'block',
-              marginBottom: 6,
-              fontSize: 13,
-              color: '#94a3b8',
-              fontWeight: 600
-            }}>
-              Meeting Title
-            </label>
-            <input
-              type="text"
-              value={meetingTitle}
-              onChange={(e) => setMeetingTitle(e.target.value)}
-              style={{
-                width: '100%',
-                padding: '10px 12px',
-                background: '#0a1628',
-                border: '1px solid #1e293b',
-                borderRadius: 6,
-                color: '#e2e8f0',
-                fontSize: 14,
-                boxSizing: 'border-box'
-              }}
-            />
-          </div>
-
-          <div style={{ marginBottom: 12 }}>
-            <label style={{
-              display: 'block',
-              marginBottom: 6,
-              fontSize: 13,
-              color: '#94a3b8',
-              fontWeight: 600
-            }}>
-              Description
-            </label>
-            <textarea
-              value={meetingDescription}
-              onChange={(e) => setMeetingDescription(e.target.value)}
-              rows={3}
-              style={{
-                width: '100%',
-                padding: '10px 12px',
-                background: '#0a1628',
-                border: '1px solid #1e293b',
-                borderRadius: 6,
-                color: '#e2e8f0',
-                fontSize: 13,
-                fontFamily: 'inherit',
-                resize: 'vertical',
-                boxSizing: 'border-box'
-              }}
-            />
-          </div>
-
-          <div style={{ display: 'flex', gap: 12 }}>
-            <div style={{ flex: 1 }}>
-              <label style={{
-                display: 'block',
-                marginBottom: 6,
-                fontSize: 13,
-                color: '#94a3b8',
-                fontWeight: 600
-              }}>
-                Duration
-              </label>
-              <select
-                value={duration}
-                onChange={(e) => {
-                  setDuration(Number(e.target.value));
-                  setSelectedSlot(null); // Reset selection when duration changes
-                  fetchAvailableSlots();
-                }}
-                style={{
-                  width: '100%',
-                  padding: '10px 12px',
-                  background: '#0a1628',
-                  border: '1px solid #1e293b',
-                  borderRadius: 6,
-                  color: '#e2e8f0',
-                  fontSize: 14
-                }}
-              >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 28 }}>
+          {/* Header Fields */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24 }}>
+            <div style={{ gridColumn: 'span 2' }}>
+              <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-secondary)', marginBottom: 8, display: 'block', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Meeting Title</label>
+              <input type="text" value={meetingTitle} onChange={e => setMeetingTitle(e.target.value)} style={{ width: '100%', padding: 12, background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border-color)', borderRadius: 8, color: 'var(--text-primary)', fontSize: 14, boxSizing: 'border-box' }} />
+            </div>
+            <div>
+              <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-secondary)', marginBottom: 8, display: 'block', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Expected Duration</label>
+              <select value={duration} onChange={e => { setDuration(Number(e.target.value)); setSelectedSlot(null); fetchAvailableSlots(); }} style={{ width: '100%', padding: 12, background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border-color)', borderRadius: 8, color: 'var(--text-primary)', fontSize: 14 }}>
                 <option value={15}>15 minutes</option>
                 <option value={30}>30 minutes</option>
-                <option value={45}>45 minutes</option>
                 <option value={60}>1 hour</option>
               </select>
             </div>
-
-            <div style={{ flex: 1 }}>
-              <label style={{
-                display: 'block',
-                marginBottom: 6,
-                fontSize: 13,
-                color: '#94a3b8',
-                fontWeight: 600
-              }}>
-                Attendee
-              </label>
-              <input
-                type="text"
-                value={item.primaryContact?.email || 'No email'}
-                disabled
-                style={{
-                  width: '100%',
-                  padding: '10px 12px',
-                  background: '#0a1628',
-                  border: '1px solid #1e293b',
-                  borderRadius: 6,
-                  color: '#64748b',
-                  fontSize: 14,
-                  boxSizing: 'border-box'
-                }}
-              />
+            <div>
+              <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-secondary)', marginBottom: 8, display: 'block', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Primary Attendee</label>
+              <div style={{ padding: 12, background: 'rgba(255,255,255,0.01)', border: '1px solid var(--border-color)', borderRadius: 8, fontSize: 14, color: 'var(--accent-secondary)', fontWeight: 600 }}>{item?.primaryContact?.email || 'No email detected'}</div>
             </div>
           </div>
-        </div>
 
-        {/* Available Slots */}
-        <div style={{ marginBottom: 20 }}>
-          <label style={{
-            display: 'block',
-            marginBottom: 10,
-            fontSize: 13,
-            color: '#94a3b8',
-            fontWeight: 600
-          }}>
-            Select Available Time Slot
-          </label>
-
-          {loading ? (
-            <div style={{ textAlign: 'center', padding: 20, color: '#64748b' }}>
-              Loading available slots...
-            </div>
-          ) : availableSlots.length === 0 ? (
+          <div>
+            <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-secondary)', marginBottom: 16, display: 'block', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Select Available Slot (Next 7 Days)</label>
             <div style={{
-              padding: 16,
-              background: '#0a1628',
-              borderRadius: 6,
-              textAlign: 'center',
-              color: '#fbbf24'
-            }}>
-              No available slots found in the next 7 days
-            </div>
-          ) : (
-            <div style={{
-              maxHeight: 300,
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))',
+              gap: 12,
+              maxHeight: 280,
               overflowY: 'auto',
-              border: '1px solid #1e293b',
-              borderRadius: 6,
-              padding: 8,
-              background: '#0a1628'
+              padding: 4
             }}>
-              {availableSlots.map((slot, index) => (
-                <div
-                  key={index}
+              {loading ? (
+                <div style={{ gridColumn: '1/-1', textAlign: 'center', padding: 40, color: 'var(--text-secondary)', fontSize: 14 }}>Scanning calendar availability...</div>
+              ) : availableSlots.map((slot, i) => (
+                <button
+                  key={i}
                   onClick={() => setSelectedSlot(slot)}
                   style={{
-                    padding: '10px 12px',
-                    marginBottom: 6,
-                    background: selectedSlot === slot ? '#3b82f6' : '#041022',
-                    border: `1px solid ${selectedSlot === slot ? '#60a5fa' : '#1e293b'}`,
-                    borderRadius: 6,
-                    cursor: 'pointer',
-                    color: '#e2e8f0',
+                    padding: '14px',
+                    background: selectedSlot === slot ? 'var(--accent-primary)' : 'rgba(255,255,255,0.03)',
+                    border: `1px solid ${selectedSlot === slot ? 'var(--accent-primary)' : 'rgba(255,255,255,0.08)'}`,
+                    borderRadius: 10,
+                    color: 'white',
                     fontSize: 13,
-                    transition: 'all 0.2s ease'
-                  }}
-                  onMouseEnter={(e) => {
-                    if (selectedSlot !== slot) {
-                      e.target.style.background = '#0f172a';
-                    }
-                  }}
-                  onMouseLeave={(e) => {
-                    if (selectedSlot !== slot) {
-                      e.target.style.background = '#041022';
-                    }
+                    cursor: 'pointer',
+                    transition: 'all 0.2s',
+                    textAlign: 'left',
+                    fontWeight: selectedSlot === slot ? 700 : 500
                   }}
                 >
                   {slot.label}
-                </div>
+                </button>
               ))}
             </div>
-          )}
-        </div>
+          </div>
 
-        {/* Action Buttons */}
-        <div style={{
-          display: 'flex',
-          gap: 12,
-          justifyContent: 'flex-end'
-        }}>
-          <button
-            onClick={onClose}
-            style={{
-              padding: '10px 20px',
-              background: '#334155',
-              border: 'none',
-              color: '#e2e8f0',
-              borderRadius: 6,
-              fontSize: 14,
-              fontWeight: 600,
-              cursor: 'pointer'
-            }}
-          >
-            Cancel
-          </button>
-          <button
-            onClick={handleSchedule}
-            disabled={!selectedSlot || creating}
-            style={{
-              padding: '10px 24px',
-              background: (!selectedSlot || creating) ? '#555' : '#10b981',
-              border: 'none',
-              color: 'white',
-              borderRadius: 6,
-              fontSize: 14,
-              fontWeight: 'bold',
-              cursor: (!selectedSlot || creating) ? 'not-allowed' : 'pointer',
-              opacity: (!selectedSlot || creating) ? 0.6 : 1
-            }}
-          >
-            {creating ? 'Scheduling...' : 'Schedule Meeting'}
-          </button>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 16, paddingTop: 16, borderTop: '1px solid rgba(255,255,255,0.05)' }}>
+            <button onClick={onClose} style={{ background: 'transparent', border: 'none', color: 'var(--text-secondary)', fontSize: 14, fontWeight: 600, cursor: 'pointer', padding: '10px 20px' }}>Cancel</button>
+            <button
+              onClick={handleSchedule}
+              disabled={!selectedSlot || creating}
+              className="btn btn-primary"
+              style={{ height: 48, padding: '0 32px', fontSize: 15, fontWeight: 800, borderRadius: 12, boxShadow: '0 10px 20px -5px rgba(16, 185, 129, 0.4)' }}
+            >
+              {creating ? 'Scheduling...' : 'Confirm Meeting'}
+            </button>
+          </div>
         </div>
       </div>
+      <style dangerouslySetInnerHTML={{
+        __html: `
+        .animate-modal-in { animation: modalPop 0.4s cubic-bezier(0.16, 1, 0.3, 1); }
+        @keyframes modalPop { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
+      `}} />
     </div>
   );
+
+  return createPortal(modalContent, document.body);
 }

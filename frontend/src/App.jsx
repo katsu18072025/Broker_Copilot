@@ -54,7 +54,7 @@ export default function App() {
 
   return (
     <div style={{ width: '100%', maxWidth: '100vw', padding: '0 24px 40px', boxSizing: 'border-box', overflowX: 'hidden' }}>
-      <LoadingOverlay isLoading={loading} isDisconnected={!isConnected} onRetry={reload} />
+      <LoadingOverlay isLoading={loading || syncing} isDisconnected={!isConnected} onRetry={reload} />
 
       <Header
         broker={broker}

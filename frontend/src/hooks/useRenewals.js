@@ -38,11 +38,16 @@ export const useRenewals = (brokerName) => {
       setDataSource(r.data.source || 'sample');
       if (fetchedItems.length > 0 && !selected) setSelected(fetchedItems[0]);
       setIsConnected(true);
+
+      // Only stop loading if we actually got items, or if we've already tried syncing
+      if (fetchedItems.length > 0 || initialSyncDone || triggerSync) {
+        setLoading(false);
+      }
     } catch (e) {
-      setIsConnected(false); // Any error here means we aren't "connected" to a healthy backend
+      setIsConnected(false);
+      setLoading(false); // Stop loading on error to show offline screen
       console.error('Failed to load renewals', e);
     } finally {
-      setLoading(false);
       isFetching.current = false;
     }
   }, [initialSyncDone, selected]);
