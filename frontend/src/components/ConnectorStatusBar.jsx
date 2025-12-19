@@ -3,7 +3,6 @@ import React, { useState, useEffect } from 'react';
 import Hubspot from '../assets/Hubspot';
 import Google from '../assets/Google';
 
-const API_BASE = 'http://localhost:4000';
 
 export default function ConnectorStatusBar({ connectors, syncStatus, dataSource, onConnectionUpdate }) {
   const [loading, setLoading] = useState(false);
@@ -21,7 +20,7 @@ export default function ConnectorStatusBar({ connectors, syncStatus, dataSource,
   }, []);
 
   const handleGoogleConnect = () => {
-    window.location.href = `${API_BASE}/auth/google`;
+    window.location.href = `/auth/google`;
   };
 
   const handleHubSpotConnect = async () => {
@@ -33,11 +32,11 @@ export default function ConnectorStatusBar({ connectors, syncStatus, dataSource,
     if (loading) return;
     setLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/auth/test/hubspot`);
+      const res = await fetch(`/auth/test/hubspot`);
       const data = await res.json();
       if (data.success) {
         setLocalConnectors(prev => prev.map(c => c.name.toLowerCase().includes('hubspot') ? { ...c, status: 'connected' } : c));
-        await fetch(`${API_BASE}/api/sync`, { method: 'POST' });
+        await fetch(`/api/sync`, { method: 'POST' });
         if (onConnectionUpdate) setTimeout(() => onConnectionUpdate(), 500);
       } else throw new Error(data.error);
     } catch (err) {

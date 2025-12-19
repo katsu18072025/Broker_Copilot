@@ -3,7 +3,6 @@ import ConnectionModal from './ConnectionModal';
 import Hubspot from '../assets/Hubspot';
 import Google from '../assets/Google';
 
-const API_BASE = 'http://localhost:4000';
 
 export default function ConnectionGuard({ connectors, onConnectionUpdate, isConnected, children }) {
     const [skipped, setSkipped] = useState(false);
@@ -26,7 +25,7 @@ export default function ConnectionGuard({ connectors, onConnectionUpdate, isConn
     const handleConnectHubSpot = async () => {
         setLoadingMap(prev => ({ ...prev, hubspot: true }));
         try {
-            const res = await fetch(`${API_BASE}/auth/test/hubspot`);
+            const res = await fetch(`/auth/test/hubspot`);
             const data = await res.json();
             if (data.success) {
                 if (onConnectionUpdate) onConnectionUpdate();
@@ -41,7 +40,7 @@ export default function ConnectionGuard({ connectors, onConnectionUpdate, isConn
     };
 
     const handleConnectGoogle = () => {
-        window.location.href = `${API_BASE}/auth/google`;
+        window.location.href = `/auth/google`;
     };
 
     if (!allConnected && !skipped) {

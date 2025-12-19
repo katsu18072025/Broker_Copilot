@@ -274,7 +274,7 @@ await tokenStore.loadFromDisk();
 // Only start server if run directly (not imported) AND not on Vercel
 if (process.argv[1] === import.meta.filename && !process.env.VERCEL) {
   app.listen(PORT, () => {
-    console.log(`🔗 Google OAuth: http://localhost:${PORT}/auth/google`);
+    console.log(`🔗 Google OAuth: ${process.env.FRONTEND_URL || 'http://localhost:' + PORT}/auth/google`);
     console.log(`💾 Token persistence: ${tokenStore.getHealthStatus().encryptionEnabled ? 'ENABLED' : 'DISABLED (in-memory only)'}`);
 
     // 🔄 AUTO-SYNC: Start initial sync
