@@ -268,8 +268,10 @@ app.post("/api/populate-calendar", async (req, res) => {
 
 // ---------------- START SERVER ----------------
 
-// Always load tokens on startup if not in-memory (handles Vercel initialization)
-await tokenStore.loadFromDisk();
+// Initialize token store (safe for serverless)
+tokenStore.loadFromDisk().catch(err => {
+  console.warn('⚠️ Token initialization warning:', err.message);
+});
 
 // Only start server if run directly (not imported) AND not on Vercel
 if (process.argv[1] === import.meta.filename && !process.env.VERCEL) {
